@@ -876,7 +876,7 @@ public class AnalyticsSettings
 public class WebDashboardSettings
 {
     [Menu("Enable Web Dashboard", "Start a local HTTP server hosting the analytics dashboard. Restart on toggle.")]
-    public ToggleNode Enabled { get; set; } = new(false);
+    public ToggleNode Enabled { get; set; } = new(true);
 
     [Menu("Port", "TCP port the dashboard listens on. Localhost + 127.0.0.1 always accepted.")]
     public RangeNode<int> Port { get; set; } = new(18421, 1024, 65535);
