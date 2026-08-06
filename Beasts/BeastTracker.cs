@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using BeastsV3.Plugin.Settings;
+using BeastsV3.Shared;
 using ExileCore;
 using ExileCore.PoEMemory.Components;
 using ExileCore.PoEMemory.MemoryObjects;
@@ -20,6 +21,14 @@ public sealed class BeastTracker
     // How long a marker stuck in Capturing is held before it counts as captured.
     private static readonly TimeSpan CapturingGrace = TimeSpan.FromSeconds(2);
 
+    // How many frames an entity may fail classification before it is written off for the
+    // rest of the area. Rarity and Stats read as unset for a frame or two after an entity
+    // enters the list, so a single miss must never blacklist a beast for the whole map.
+    private const int MaxRejectRetries = 10;
+
+    // Ceiling on distinct unknown metadata paths reported, so a surprise cannot fill the log.
+    private const int MaxLoggedUnknownMetadata = 200;
+
     private readonly GameController _game;
     private readonly BeastsSettings _settings;
     private readonly Dictionary<string, string> _beastNameByMetadata = new(StringComparer.OrdinalIgnoreCase);
@@ -32,9 +41,18 @@ public sealed class BeastTracker
     private readonly HashSet<long> _seenThisFrame = new();
     private readonly List<long> _scratchIds = new();
 
-    // Per-entity verdict cache for the Reconcile pre-filter, cleared on area change.
-    private readonly HashSet<long> _notCapturable = new();
+    // Entities written off for this area, skipped by Reconcile before any memory read.
+    // Only verdicts that cannot change are recorded here; see NoteRejection.
+    private readonly HashSet<long> _rejected = new();
+
+    // Failed classification attempts per entity, promoted to _rejected once the budget runs out.
+    private readonly Dictionary<long, int> _rejectAttempts = new();
+
     private readonly Dictionary<long, string> _beastNameByEntityId = new();
+
+    // Metadata paths already reported as missing from the catalog. Kept for the whole
+    // session, not per area, so each path costs exactly one log line.
+    private readonly HashSet<string> _loggedUnknownMetadata = new(StringComparer.Ordinal);
 
     // Rebuilt each Reconcile; read by WorldLabels.
     private readonly Dictionary<long, LiveBeastInfo> _liveInfo = new();
@@ -69,7 +87,8 @@ public sealed class BeastTracker
         _liveTracked.Clear();
 
         // Entity ids are reassigned on load, so id-keyed caches are dropped every transition.
-        _notCapturable.Clear();
+        _rejected.Clear();
+        _rejectAttempts.Clear();
         _beastNameByEntityId.Clear();
         _liveInfo.Clear();
 
@@ -85,8 +104,6 @@ public sealed class BeastTracker
         _capturedIds.Clear();
         _markers.Clear();
         _markerSnapshot.Clear();
-        _notCapturable.Clear();
-        _beastNameByEntityId.Clear();
     }
 
     // Flips every live marker to cached and stamps the time.
@@ -104,35 +121,121 @@ public sealed class BeastTracker
         }
     }
 
+    // What a first-sight entity turned out to be.
+    private enum BeastVerdict
+    {
+        // Nothing readable yet. Carries no information, so it is never cached as a rejection.
+        Unknown,
+
+        // Not a rare capturable monster.
+        NotABeast,
+
+        // Rare and capturable but absent from the catalog. Counts toward the quest counter
+        // and never gets a marker.
+        Uncatalogued,
+
+        // Rare, capturable and in the catalog.
+        Tracked,
+    }
+
+    // Classifies an entity from scratch. Pure: it reads no caches and records no verdict,
+    // so both entry points below can decide for themselves what to do with the answer.
+    private BeastVerdict Classify(Entity entity, out string beastName)
+    {
+        beastName = null;
+        if (entity == null) return BeastVerdict.Unknown;
+
+        if (!BeastCaptureStates.IsRareCapturable(entity)) return BeastVerdict.NotABeast;
+
+        // Rare and capturable but no metadata means the entity is still being populated;
+        // treating that as "not in the catalog" would be a false negative.
+        if (string.IsNullOrEmpty(entity.Metadata)) return BeastVerdict.Unknown;
+
+        return TryResolveTrackedBeastName(entity.Metadata, out beastName)
+            ? BeastVerdict.Tracked
+            : BeastVerdict.Uncatalogued;
+    }
+
     public void OnEntityAdded(Entity entity)
     {
-        if (!BeastCaptureStates.IsRareCapturable(entity))
+        if (entity == null) return;
+
+        var verdict = Classify(entity, out var beastName);
+
+        // EntityAdded fires the instant an entity enters the list, which is exactly when
+        // Rarity and Stats are least likely to be readable. A negative verdict here is
+        // therefore never cached; Reconcile re-checks the entity on later frames.
+        if (verdict is BeastVerdict.Unknown or BeastVerdict.NotABeast) return;
+
+        if (verdict != BeastVerdict.Tracked)
         {
-            // Primes Reconcile's reject cache.
-            if (entity != null) _notCapturable.Add(entity.Id);
+            RejectUncatalogued(entity, DateTime.UtcNow);
             return;
         }
 
-        if (!_countedRareIds.Add(entity.Id)) return;
+        RegisterRareBeast(entity.Id, beastName, DateTime.UtcNow);
 
-        TryResolveTrackedBeastName(entity.Metadata, out var beastName);
-        if (beastName != null)
-        {
-            _liveTracked[entity.Id] = entity;
-            _beastNameByEntityId[entity.Id] = beastName;
-        }
-        else
-        {
-            // Capturable but not in the catalog, so it is rejected too.
-            _notCapturable.Add(entity.Id);
-        }
+        _liveTracked[entity.Id] = entity;
+        _beastNameByEntityId[entity.Id] = beastName;
+        _rejectAttempts.Remove(entity.Id);
+    }
 
-        RareBeastSeen?.Invoke(entity.Id, beastName, DateTime.UtcNow);
+    // Handles a rare capturable monster with no catalog entry. It still counts toward the
+    // beast counter, but it has no name, price or marker, and it is written off for the
+    // area because metadata never changes for a given entity id.
+    private void RejectUncatalogued(Entity entity, DateTime nowUtc)
+    {
+        RegisterRareBeast(entity.Id, null, nowUtc);
+        LogUnknownMetadataOnce(entity.Metadata);
+
+        _rejected.Add(entity.Id);
+        _rejectAttempts.Remove(entity.Id);
+    }
+
+    // Reports each unseen capturable metadata path once. A league that adds or renames
+    // beasts surfaces here, so a user's log alone is enough to spot catalog drift without
+    // them having to reproduce anything.
+    private void LogUnknownMetadataOnce(string metadata)
+    {
+        if (string.IsNullOrEmpty(metadata)) return;
+        if (_loggedUnknownMetadata.Count >= MaxLoggedUnknownMetadata) return;
+        if (!_loggedUnknownMetadata.Add(metadata)) return;
+
+        Log.Warn($"Capturable rare beast missing from the catalog: '{metadata}'. " +
+                 "It counts toward the beast counter but has no name, price or marker.");
     }
 
     public void OnEntityRemoved(Entity entity)
     {
         if (entity != null) _liveTracked.Remove(entity.Id);
+    }
+
+    // Records first sight of a rare capturable beast. Both EntityAdded and Reconcile go
+    // through here, so the counter cannot drift from what is being tracked and rendered.
+    // Returns true when this was the first sighting.
+    private bool RegisterRareBeast(long entityId, string beastName, DateTime nowUtc)
+    {
+        if (!_countedRareIds.Add(entityId)) return false;
+
+        RareBeastSeen?.Invoke(entityId, beastName, nowUtc);
+        return true;
+    }
+
+    // Counts a failed classification. The entity is only written off once the retry budget
+    // is spent, which keeps a transient miss from blacklisting a beast for the whole map
+    // while still letting the per-frame pass shed non-beasts after a handful of frames.
+    private void NoteRejection(long entityId)
+    {
+        var attempts = _rejectAttempts.TryGetValue(entityId, out var previous) ? previous + 1 : 1;
+
+        if (attempts >= MaxRejectRetries)
+        {
+            _rejectAttempts.Remove(entityId);
+            _rejected.Add(entityId);
+            return;
+        }
+
+        _rejectAttempts[entityId] = attempts;
     }
 
     // Per-frame pass over the entity list: refreshes live tracking, fires BeastCaptured for
@@ -153,29 +256,49 @@ public sealed class BeastTracker
             var id = entity.Id;
 
             // Reject cache, checked before any memory read.
-            if (_notCapturable.Contains(id)) continue;
+            if (_rejected.Contains(id)) continue;
 
             // Cached name lookup; only first-sight entities run the checks below.
             if (!_beastNameByEntityId.TryGetValue(id, out var beastName))
             {
-                if (!BeastCaptureStates.IsRareCapturable(entity) ||
-                    !TryResolveTrackedBeastName(entity.Metadata, out beastName))
+                var verdict = Classify(entity, out beastName);
+
+                if (verdict != BeastVerdict.Tracked)
                 {
-                    _notCapturable.Add(id);
+                    if (verdict == BeastVerdict.Uncatalogued) RejectUncatalogued(entity, now);
+                    else NoteRejection(id);
+
                     continue;
                 }
 
                 _beastNameByEntityId[id] = beastName;
+
+                // Safety net for a beast EntityAdded missed because Rarity or Stats were
+                // not readable when it fired. Registering here as well is what keeps the
+                // counter and the markers from diverging.
+                if (RegisterRareBeast(id, beastName, now))
+                {
+                    // Logged because a recovery means EntityAdded missed a beast, which is
+                    // the failure this pass exists to cover. Frequent lines here in a user's
+                    // log point at entity population timing rather than at the catalog.
+                    var attempts = _rejectAttempts.TryGetValue(id, out var tries) ? tries : 0;
+                    Log.Debug($"Reconcile recovered '{beastName}' (entity {id}) that EntityAdded missed " +
+                              $"after {attempts} failed classification attempt(s).");
+                }
+
+                _rejectAttempts.Remove(id);
             }
 
             // Single read of the buff list, answering both questions below.
             ReadBuffState(entity, out var killOnExpiry, out var captureState);
 
-            // Self-removing monsters are dropped without being recorded.
+            // Self-removing monsters are dropped without being recorded. The buff does not
+            // come back off, so the entity is written off rather than re-read every frame.
             if (killOnExpiry)
             {
                 _liveTracked.Remove(id);
                 _markers.Remove(id);
+                _rejected.Add(id);
                 continue;
             }
 

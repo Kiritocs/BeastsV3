@@ -31,6 +31,7 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
     private SettingsMenu _settingsMenu;
 
     private BeastTracker _tracker;
+    private DetectionHeartbeat _heartbeat;
     private PriceService _prices;
     private PricePanel _pricePanel;
     private TabPickers _tabPickers;
@@ -108,6 +109,7 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
 
         _prices = new PriceService(Settings, () => GameHelpers.TryGetServerLeague(GameController));
         _tracker = new BeastTracker(GameController, Settings);
+        _heartbeat = new DetectionHeartbeat(GameController, Settings, _tracker);
         _pricePanel = new PricePanel(Settings, _prices);
         // Deferred so it also works before _recorder exists and after an unload.
         Func<bool> isInFinalizedMap = () => _recorder?.State.IsInFinalizedMap == true;
@@ -307,6 +309,7 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
         _fullSequence = null;
 
         _logFilePanel = null;
+        _heartbeat = null;
 
         Log.Info("Beasts V3 unloaded.");
 
@@ -409,6 +412,7 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
         HandleAnalyticsToggleEdge(now);
 
         _tracker.Reconcile();
+        _heartbeat?.Tick(now);
         _prices.MaybeAutoRefresh(now);
 
         if (Settings.Analytics.Enable.Value)
