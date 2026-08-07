@@ -145,7 +145,7 @@ public sealed class MapStashUi
 
             var rect = button.GetClientRect();
             await _input.ClickAtAsync(
-                new SharpVec2(rect.Center.X, rect.Center.Y), MouseButtons.Left,
+                rect, MouseButtons.Left,
                 preDelayMs: timing.Clicks.UiClickPreDelayMs.Value,
                 postDelayMs: Math.Max(timing.Clicks.UiClickPostDelayMs.Value, timing.Polling.TabSwitchDelayMs.Value));
 
@@ -264,7 +264,7 @@ public sealed class MapStashUi
         var rect = tab.GetClientRect();
 
         await _input.ClickAtAsync(
-            new SharpVec2(rect.Center.X, rect.Center.Y),
+            rect,
             MouseButtons.Left,
             preDelayMs: timing.Clicks.UiClickPreDelayMs.Value,
             postDelayMs: Math.Max(timing.Clicks.UiClickPostDelayMs.Value, timing.Polling.TabSwitchDelayMs.Value));

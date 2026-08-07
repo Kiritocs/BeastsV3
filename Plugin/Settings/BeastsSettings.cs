@@ -263,6 +263,9 @@ public class MapRenderSettings
     [Menu("Show World Labels", "Draw beast name/price labels + ground circles on tracked beasts in the 3D world.")]
     public ToggleNode ShowBeastLabelsInWorld { get; set; } = new(true);
 
+    [Menu("Hide While Large Map Is Open", "Hide World Labels while the large map is open.")]
+    public ToggleNode HideWhileLargeMapIsOpen { get; set; } = new(false);
+
     [Menu("Show Cached Tracked Beasts", "Keep a beast on the large map and in the tracked-beasts window after it leaves your vision bubble, at the last position it was seen. Off shows only beasts currently loaded. In-world labels are always live-only, since a remembered beast isn't there to draw a label over.")]
     public ToggleNode ShowCachedTrackedBeasts { get; set; } = new(true);
 
@@ -546,8 +549,187 @@ public class TimingSettings
     [Menu("Timeouts", "Upper bounds on how long a wait can take.")]
     public TimingTimeoutsSettings Timeouts { get; set; } = new();
 
+    [Menu("Humanization", "Spread delays, curve the cursor, and click off-centre so automation stops looking metronomic.")]
+    public TimingHumanizationSettings Humanization { get; set; } = new();
+
     [Menu("Reset Timings To Defaults", "Restore every timing knob below to its shipping default.")]
     public ButtonNode ResetToDefaults { get; set; } = new();
+}
+
+[Submenu(CollapsedByDefault = true)]
+public class TimingHumanizationSettings
+{
+    [Menu("Enable Humanization", "Master switch. Off means every delay and cursor move behaves exactly as it did before.")]
+    public ToggleNode Enable { get; set; } = new(false);
+
+    // ---- presets ----
+
+    [Menu("Preset: Light", "Barely-there jitter. Instant cursor, small delay spread. Fastest.")]
+    public ButtonNode PresetLight { get; set; } = new();
+
+    [Menu("Preset: Human", "Curved cursor travel, real key hold times, off-centre clicks. The recommended balance.")]
+    public ButtonNode PresetHuman { get; set; } = new();
+
+    [Menu("Preset: Paranoid", "Slow curved travel, wide delay spread, frequent hesitation pauses. Noticeably slower runs.")]
+    public ButtonNode PresetParanoid { get; set; } = new();
+
+    // ---- delay spread ----
+
+    [Menu("Delay Variance (%)", "Standard deviation of the delay spread, as a percentage of the configured delay. 30 means a 100ms delay lands mostly between 70ms and 130ms.")]
+    public RangeNode<int> DelayVariancePercent { get; set; } = new(25, 0, 100);
+
+    [Menu("Delay Floor (%)", "A humanized delay is never shorter than this share of the configured value.")]
+    public RangeNode<int> MinDelayPercent { get; set; } = new(60, 0, 100);
+
+    [Menu("Delay Ceiling (%)", "A humanized delay is never longer than this share of the configured value.")]
+    public RangeNode<int> MaxDelayPercent { get; set; } = new(180, 100, 500);
+
+    [Menu("Minimum Jitter (ms)", "Absolute spread applied even to very short delays, so a 1ms delay is not always exactly 1ms.")]
+    public RangeNode<int> MinJitterMs { get; set; } = new(4, 0, 50);
+
+    // ---- key presses ----
+
+    [Menu("Key Hold Min (ms)", "Shortest time a key stays down between KeyDown and KeyUp.")]
+    public RangeNode<int> KeyHoldMinMs { get; set; } = new(35, 0, 300);
+
+    [Menu("Key Hold Max (ms)", "Longest time a key stays down between KeyDown and KeyUp.")]
+    public RangeNode<int> KeyHoldMaxMs { get; set; } = new(85, 0, 300);
+
+    // ---- click points ----
+
+    [Menu("Jitter Click Points", "Click a random point inside the target instead of always dead-centre.")]
+    public ToggleNode ClickPointJitter { get; set; } = new(true);
+
+    [Menu("Click Jitter Radius (px)", "Hard cap on how far from the centre a click may land.")]
+    public RangeNode<int> ClickJitterRadiusPx { get; set; } = new(5, 0, 40);
+
+    [Menu("Click Jitter Element (%)", "Share of the target element the jitter may use, when the element's bounds are known. Capped by the radius above and always kept clear of the edge.")]
+    public RangeNode<int> ClickJitterElementPercent { get; set; } = new(40, 0, 100);
+
+    // ---- cursor travel (WindMouse) ----
+
+    [Menu("Curved Cursor Travel", "Move the cursor along a WindMouse arc instead of teleporting it. Adds real travel time to every click.")]
+    public ToggleNode UseWindMouse { get; set; } = new(true);
+
+    [Menu("Minimum Travel Distance (px)", "Moves shorter than this teleport instead of tracing a path.")]
+    public RangeNode<int> MinPathDistancePx { get; set; } = new(12, 0, 200);
+
+    [Menu("Wind Strength", "How hard the random sideways force pushes. Higher is wobblier.")]
+    public RangeNode<float> WindStrength { get; set; } = new(3.0f, 0.0f, 10.0f);
+
+    [Menu("Gravity Strength", "How hard the cursor is pulled toward the target. Higher is straighter and faster.")]
+    public RangeNode<float> GravityStrength { get; set; } = new(9.0f, 0.1f, 15.0f);
+
+    [Menu("Step Size", "Maximum distance covered per path point. Higher means fewer, longer hops.")]
+    public RangeNode<float> StepSize { get; set; } = new(12.0f, 1.0f, 40.0f);
+
+    [Menu("Target Area", "Distance from the target at which the wind is damped and the cursor settles in.")]
+    public RangeNode<float> TargetArea { get; set; } = new(12.0f, 0.0f, 40.0f);
+
+    [Menu("Path Step Min Delay (ms)", "Shortest pause between two points of a cursor path.")]
+    public RangeNode<int> PathStepMinDelayMs { get; set; } = new(1, 0, 50);
+
+    [Menu("Path Step Max Delay (ms)", "Longest pause between two points of a cursor path. This is the main cost of curved travel.")]
+    public RangeNode<int> PathStepMaxDelayMs { get; set; } = new(4, 0, 100);
+
+    // ---- hesitation ----
+
+    [Menu("Hesitation Chance (%)", "Chance that any one click is preceded by a longer 'looked away' pause.")]
+    public RangeNode<int> HesitationChancePercent { get; set; } = new(4, 0, 100);
+
+    [Menu("Hesitation Min (ms)", "Shortest hesitation pause.")]
+    public RangeNode<int> HesitationMinMs { get; set; } = new(180, 0, 5000);
+
+    [Menu("Hesitation Max (ms)", "Longest hesitation pause.")]
+    public RangeNode<int> HesitationMaxMs { get; set; } = new(700, 0, 5000);
+
+    [Menu("Cursor Drift During Pauses", "Wander the cursor a pixel or two during hesitation pauses. Off by default: it is the most likely knob to disturb a hover-sensitive UI.")]
+    public ToggleNode CursorDriftDuringPauses { get; set; } = new(false);
+
+    [Menu("Cursor Drift Radius (px)", "How far the cursor may wander during a hesitation pause.")]
+    public RangeNode<int> CursorDriftRadiusPx { get; set; } = new(2, 0, 15);
+
+    // ---- presets ----
+
+    public enum Preset { Light, Human, Paranoid }
+
+    // Stamps a whole coherent configuration in one go. Every knob stays individually
+    // editable afterwards; a preset is a starting point, not a mode.
+    public void Apply(Preset preset)
+    {
+        switch (preset)
+        {
+            case Preset.Light:
+                DelayVariancePercent.Value = 15;
+                MinDelayPercent.Value = 80;
+                MaxDelayPercent.Value = 130;
+                MinJitterMs.Value = 2;
+                KeyHoldMinMs.Value = 20;
+                KeyHoldMaxMs.Value = 45;
+                ClickPointJitter.Value = true;
+                ClickJitterRadiusPx.Value = 3;
+                ClickJitterElementPercent.Value = 25;
+                UseWindMouse.Value = false;
+                MinPathDistancePx.Value = 12;
+                PathStepMinDelayMs.Value = 0;
+                PathStepMaxDelayMs.Value = 2;
+                HesitationChancePercent.Value = 0;
+                CursorDriftDuringPauses.Value = false;
+                break;
+
+            case Preset.Human:
+                DelayVariancePercent.Value = 25;
+                MinDelayPercent.Value = 60;
+                MaxDelayPercent.Value = 180;
+                MinJitterMs.Value = 4;
+                KeyHoldMinMs.Value = 35;
+                KeyHoldMaxMs.Value = 85;
+                ClickPointJitter.Value = true;
+                ClickJitterRadiusPx.Value = 5;
+                ClickJitterElementPercent.Value = 40;
+                UseWindMouse.Value = true;
+                MinPathDistancePx.Value = 12;
+                WindStrength.Value = 3.0f;
+                GravityStrength.Value = 9.0f;
+                StepSize.Value = 12.0f;
+                TargetArea.Value = 12.0f;
+                PathStepMinDelayMs.Value = 1;
+                PathStepMaxDelayMs.Value = 4;
+                HesitationChancePercent.Value = 4;
+                HesitationMinMs.Value = 180;
+                HesitationMaxMs.Value = 700;
+                CursorDriftDuringPauses.Value = false;
+                CursorDriftRadiusPx.Value = 2;
+                break;
+
+            case Preset.Paranoid:
+                DelayVariancePercent.Value = 45;
+                MinDelayPercent.Value = 50;
+                MaxDelayPercent.Value = 260;
+                MinJitterMs.Value = 8;
+                KeyHoldMinMs.Value = 45;
+                KeyHoldMaxMs.Value = 120;
+                ClickPointJitter.Value = true;
+                ClickJitterRadiusPx.Value = 8;
+                ClickJitterElementPercent.Value = 55;
+                UseWindMouse.Value = true;
+                MinPathDistancePx.Value = 6;
+                WindStrength.Value = 4.5f;
+                GravityStrength.Value = 6.0f;
+                StepSize.Value = 9.0f;
+                TargetArea.Value = 18.0f;
+                PathStepMinDelayMs.Value = 2;
+                PathStepMaxDelayMs.Value = 8;
+                HesitationChancePercent.Value = 12;
+                HesitationMinMs.Value = 300;
+                HesitationMaxMs.Value = 1400;
+                CursorDriftDuringPauses.Value = true;
+                CursorDriftRadiusPx.Value = 3;
+                break;
+        }
+
+        Enable.Value = true;
+    }
 }
 
 [Submenu(CollapsedByDefault = true)]

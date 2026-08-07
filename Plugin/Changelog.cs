@@ -30,6 +30,10 @@ public static class Changelog
             "Automation: added a Panic Stop hotkey that halts any running automation immediately, independent of workflow state or visible UI panels.",
             "Faustus listing: the price popup's currency is now forced back to Chaos Orb if something else was selected, instead of silently mispricing every listed beast.",
             "Overlays: beast markers, world labels, the tracked-beasts window, the counter and the analytics overlay are now also hidden in non-trackable special areas (Menagerie, atlas encounters, Expedition, Betrayal safehouses), not just town and hideout."),
+        new(2026, 8, 7, 2,
+            "Automation: added an Input Humanization system (off by default, under Timing) - Gaussian-jittered delays, WindMouse curved cursor travel, off-centre click points, randomized key-hold times, and occasional hesitation pauses with optional cursor drift.",
+            "Automation: three Humanization presets (Light, Human, Paranoid) to set a coherent starting point in one click; every knob stays individually editable afterwards.",
+            "Visibility: added a 'Hide while Large Map is open' option to the overlays settings")
     ];
 
     // Entries newest first, sorted once at load.

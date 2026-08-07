@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -74,7 +75,7 @@ public sealed class Runner
             await _uiCleanup.PrepareAsync(failureLabel, uiCleanupOptions);
             _input.ThrowIfStopRequested();
 
-            _inputLock.EnableForRun(passthroughKeys);
+            _inputLock.EnableForRun(WithPanicStopKey(passthroughKeys));
             await body(_state.Cts.Token);
         }
         catch (OperationCanceledException)
@@ -101,13 +102,26 @@ public sealed class Runner
     }
 
     // Checks for panic stop hotkey and stops if pressed. Works anytime without requiring workflow matching.
+    // Polled every frame including while idle: the tracker discards the first edge it ever sees for a
+    // key, so skipping the idle frames would make it swallow the first real press of every session.
     public void CheckPanicStop(HotkeyNodeV2 panicStopHotkey)
     {
-        if (panicStopHotkey == null || !IsRunning) return;
-        if (!_hotkeys.TryGet(panicStopHotkey, isRunning: true, out var key, out var usedHeldFallback)) return;
+        if (panicStopHotkey == null) return;
+        if (!_hotkeys.TryGet(panicStopHotkey, IsRunning, out var key, out var usedHeldFallback)) return;
+        if (!IsRunning) return;
 
-        Log.Info($"Panic stop activated! key={key}");
+        Log.Info($"Panic stop activated! key={key}, source={(usedHeldFallback ? "held-fallback" : "pressed-once")}");
         RequestStop();
+    }
+
+    // The panic stop key must always survive the input lock, whatever the workflow passes through.
+    // Without this the low-level keyboard hook eats the press before ExileCore can poll it.
+    private IEnumerable<Keys> WithPanicStopKey(IEnumerable<Keys> passthroughKeys)
+    {
+        var keys = passthroughKeys?.ToList() ?? new List<Keys>();
+        var panicKey = _settings.PanicStopHotkey?.Value.Key ?? Keys.None;
+        if (panicKey != Keys.None && !keys.Contains(panicKey)) keys.Add(panicKey);
+        return keys;
     }
 
     // ---- status helpers ------------------------------------------------

@@ -386,7 +386,7 @@ public sealed class FaustusList
         if (!_hoverGateEnabled)
         {
             var blind = item.GetClientRect();
-            _input.MoveCursorTo(new SharpVec2(blind.Center.X, blind.Center.Y));
+            await _input.MoveCursorToAsync(blind);
             await _input.DelayAsync(_settings.Timing.Clicks.CtrlClickPreDelayMs.Value);
             return true;
         }
@@ -396,7 +396,7 @@ public sealed class FaustusList
             var rect = item.GetClientRect();
             if (rect.Width <= 0 || rect.Height <= 0) return false;
 
-            _input.MoveCursorTo(new SharpVec2(rect.Center.X, rect.Center.Y));
+            await _input.MoveCursorToAsync(rect);
 
             if (await _waits.WaitForAsync(() => _inventory.IsHoveringItem(item),
                     HoverConfirmTimeoutMs, Math.Max(1, _settings.Timing.Polling.FastPollDelayMs.Value)))
@@ -433,13 +433,13 @@ public sealed class FaustusList
         // user picked manually before the run - and keeps reusing it for every listing after
         // that. Beast prices are always in chaos, so it is forced back once per run; once
         // corrected this is a single memory read for every later item.
-        await EnsureListingCurrencyAsync();
+        var currencyChanged = await EnsureListingCurrencyAsync();
 
         // The currency dropdown steals input focus from the price field while it's being
         // clicked through, which otherwise leaves the Ctrl+A/Backspace/digits below typing
-        // into nothing and the field stuck on its previous value. Re-clicking it is cheap
-        // and harmless even when the currency needed no correction at all.
-        await FocusPriceFieldAsync();
+        // into nothing and the field stuck on its previous value. Only needed when the
+        // dropdown was actually clicked through.
+        if (currencyChanged) await FocusPriceFieldAsync();
 
         var timing = _settings.Timing;
 
@@ -502,7 +502,7 @@ public sealed class FaustusList
         if (rect == null) return;
 
         var timing = _settings.Timing;
-        await _input.ClickAtAsync(new SharpVec2(rect.Value.Center.X, rect.Value.Center.Y), MouseButtons.Left,
+        await _input.ClickAtAsync(rect.Value, MouseButtons.Left,
             preDelayMs: timing.Clicks.UiClickPreDelayMs.Value, postDelayMs: timing.Clicks.UiClickPostDelayMs.Value);
     }
 
@@ -524,11 +524,13 @@ public sealed class FaustusList
 
     // Forces the Faustus price popup's currency back to Chaos Orb if something else - most
     // likely a currency a user picked manually before this run - is currently selected.
+    // Returns whether it actually clicked through the dropdown, so the caller only re-focuses
+    // the price field (which that clicking steals focus from) when there was something to undo.
     // A no-op past the first correction, since the dropdown then keeps reading back correctly.
-    private async Task EnsureListingCurrencyAsync()
+    private async Task<bool> EnsureListingCurrencyAsync()
     {
         if (string.Equals(_merchant.PopupCurrencyName(), ListingCurrencyName, StringComparison.OrdinalIgnoreCase))
-            return;
+            return false;
 
         var timing = _settings.Timing;
 
@@ -537,14 +539,14 @@ public sealed class FaustusList
             if (_merchant.PriceCurrencyDropdown?.IsOpened != true && !await ToggleCurrencyDropdownAsync())
             {
                 Log.Warn("Faustus price currency dropdown would not open - leaving the listing currency as-is.");
-                return;
+                return true;
             }
 
             var boxRect = _merchant.PriceCurrencyDropdown?.GetClientRect();
             if (boxRect == null) break;
 
             // Scrolled to the top before this attempt's click, every time - see comment above.
-            _input.MoveCursorTo(new SharpVec2(boxRect.Value.Center.X, boxRect.Value.Bottom + 20));
+            await _input.MoveCursorToAsync(new SharpVec2(boxRect.Value.Center.X, boxRect.Value.Bottom + 20));
             _input.ScrollWheel(CurrencyScrollUpTicks);
             await _input.DelayAsync(timing.Clicks.UiClickPostDelayMs.Value);
 
@@ -558,7 +560,7 @@ public sealed class FaustusList
             {
                 // Selecting normally closes the dropdown on its own; only nudge it shut if not.
                 if (_merchant.PriceCurrencyDropdown?.IsOpened == true) await ToggleCurrencyDropdownAsync();
-                return;
+                return true;
             }
         }
 
@@ -575,7 +577,7 @@ public sealed class FaustusList
         if (boxRect == null) return false;
 
         var wasOpened = _merchant.PriceCurrencyDropdown?.IsOpened == true;
-        await _input.ClickAtAsync(new SharpVec2(boxRect.Value.Center.X, boxRect.Value.Center.Y), MouseButtons.Left,
+        await _input.ClickAtAsync(boxRect.Value, MouseButtons.Left,
             preDelayMs: timing.Clicks.UiClickPreDelayMs.Value, postDelayMs: timing.Clicks.UiClickPostDelayMs.Value);
 
         return await _waits.WaitForAsync(() => _merchant.PriceCurrencyDropdown?.IsOpened == !wasOpened, 500,
@@ -609,7 +611,7 @@ public sealed class FaustusList
 
                 var rect = tabButton.GetClientRect();
                 await _input.ClickAtAsync(
-                    new SharpVec2(rect.Center.X, rect.Center.Y),
+                    rect,
                     MouseButtons.Left,
                     preDelayMs: timing.Clicks.UiClickPreDelayMs.Value,
                     postDelayMs: Math.Max(timing.Clicks.UiClickPostDelayMs.Value, timing.Polling.TabSwitchDelayMs.Value));
@@ -647,7 +649,7 @@ public sealed class FaustusList
         var previousServerInventory = _merchant.VisibleShopServerInventory?.Address ?? 0;
 
         await _input.ClickAtAsync(
-            new SharpVec2(rect.Center.X, rect.Center.Y),
+            rect,
             MouseButtons.Left,
             preDelayMs: timing.Clicks.UiClickPreDelayMs.Value,
             postDelayMs: Math.Max(timing.Clicks.UiClickPostDelayMs.Value, timing.Polling.TabSwitchDelayMs.Value));

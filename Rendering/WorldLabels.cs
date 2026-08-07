@@ -42,6 +42,7 @@ public sealed class WorldLabels
         if (!_settings.MapRender.ShowBeastLabelsInWorld.Value) return;
         if (_settings.Visibility.HideInHideout.Value && (GameHelpers.IsTownOrHideout(_game.Area?.CurrentArea) || !GameHelpers.IsRunnableMap(_game.Area?.CurrentArea))) return;
         // Nothing is tracked inside a banked map.
+        if (_settings.MapRender.HideWhileLargeMapIsOpen.Value && (_game.IngameState?.IngameUi?.Map?.LargeMap?.IsVisible == true)) return;
         if (_isInFinalizedMap()) return;
 
         var camera = _game?.IngameState?.Camera;

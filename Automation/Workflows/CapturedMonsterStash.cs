@@ -227,7 +227,7 @@ public sealed class CapturedMonsterStash
                 if (rect.Width <= 0 || rect.Height <= 0) continue;
 
                 await _input.ClickAtAsync(
-                    new SharpVec2(rect.Center.X, rect.Center.Y),
+                    rect,
                     MouseButtons.Left,
                     preDelayMs: timing.Clicks.CtrlClickPreDelayMs.Value,
                     postDelayMs: timing.Clicks.CtrlClickPostDelayMs.Value);

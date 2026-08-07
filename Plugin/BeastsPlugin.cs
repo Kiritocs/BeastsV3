@@ -612,7 +612,29 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
             Settings.Timing.Clicks = new BeastsV3.Plugin.Settings.TimingClicksSettings();
             Settings.Timing.Polling = new BeastsV3.Plugin.Settings.TimingPollingSettings();
             Settings.Timing.Timeouts = new BeastsV3.Plugin.Settings.TimingTimeoutsSettings();
+            Settings.Timing.Humanization = new BeastsV3.Plugin.Settings.TimingHumanizationSettings();
             Log.Info("Timing settings reset to defaults.");
+        };
+
+        WireHumanizationPreset(Settings.Timing.Humanization.PresetLight,
+            BeastsV3.Plugin.Settings.TimingHumanizationSettings.Preset.Light);
+        WireHumanizationPreset(Settings.Timing.Humanization.PresetHuman,
+            BeastsV3.Plugin.Settings.TimingHumanizationSettings.Preset.Human);
+        WireHumanizationPreset(Settings.Timing.Humanization.PresetParanoid,
+            BeastsV3.Plugin.Settings.TimingHumanizationSettings.Preset.Paranoid);
+    }
+
+    // A preset stamps a coherent set of humanization values and switches the feature on.
+    // Every knob stays individually editable afterwards.
+    private void WireHumanizationPreset(
+        ExileCore.Shared.Nodes.ButtonNode button,
+        BeastsV3.Plugin.Settings.TimingHumanizationSettings.Preset preset)
+    {
+        if (button == null) return;
+        button.OnPressed = () =>
+        {
+            Settings.Timing.Humanization.Apply(preset);
+            Log.Info($"Humanization preset applied: {preset}.");
         };
     }
 

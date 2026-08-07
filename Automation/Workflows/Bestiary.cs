@@ -348,7 +348,7 @@ public sealed class Bestiary
         {
             // Ctrl is already held; clicking the row body itemizes it.
             await _input.ClickAtAsync(
-                new SharpVec2(rect.Center.X, rect.Center.Y),
+                rect,
                 MouseButtons.Left,
                 preDelayMs: timing.Clicks.BestiaryItemizePreDelayMs.Value,
                 postDelayMs: Math.Max(timing.Clicks.BestiaryItemizePostDelayMs.Value, floor));
@@ -362,8 +362,7 @@ public sealed class Bestiary
         var buttonRect = releaseButton.GetClientRect();
         if (buttonRect.Width <= 0 || buttonRect.Height <= 0) return false;
 
-        var center = new SharpVec2(buttonRect.Center.X, buttonRect.Center.Y);
-        _input.MoveCursorTo(center);
+        await _input.MoveCursorToAsync(buttonRect);
 
         var hovered = await _waits.WaitForAsync(
             () => _bestiaryUi.IsHoveringReleaseButton(releaseButton),
@@ -408,7 +407,7 @@ public sealed class Bestiary
         Log.Debug("Dismissing Bestiary destroy-confirmation dialog.");
 
         await _input.ClickAtAsync(
-            new SharpVec2(rect.Center.X, rect.Center.Y),
+            rect,
             MouseButtons.Left,
             preDelayMs: timing.Clicks.UiClickPreDelayMs.Value,
             postDelayMs: timing.Clicks.UiClickPostDelayMs.Value);
@@ -638,7 +637,7 @@ public sealed class Bestiary
 
             var rect = target.GetClientRect();
             await _input.ClickAtAsync(
-                new SharpVec2(rect.Center.X, rect.Center.Y),
+                rect,
                 MouseButtons.Left,
                 preDelayMs: timing.Clicks.UiClickPreDelayMs.Value,
                 postDelayMs: Math.Max(timing.Clicks.UiClickPostDelayMs.Value, timing.Polling.TabSwitchDelayMs.Value));

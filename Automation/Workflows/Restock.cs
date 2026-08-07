@@ -348,7 +348,7 @@ public sealed class Restock
 
         var rect = item.GetClientRect();
         await _input.ClickAtAsync(
-            new SharpVec2(rect.Center.X, rect.Center.Y), MouseButtons.Left,
+            rect, MouseButtons.Left,
             preDelayMs: timing.Clicks.UiClickPreDelayMs.Value,
             postDelayMs: timing.Clicks.UiClickPostDelayMs.Value,
             modifiers: new[] { Keys.LShiftKey });
@@ -447,7 +447,7 @@ public sealed class Restock
         var rect = item.GetClientRect();
         var timing = _settings.Timing;
         await _input.ClickAtAsync(
-            new SharpVec2(rect.Center.X, rect.Center.Y),
+            rect,
             MouseButtons.Left,
             preDelayMs: timing.Clicks.CtrlClickPreDelayMs.Value,
             postDelayMs: timing.Clicks.CtrlClickPostDelayMs.Value,

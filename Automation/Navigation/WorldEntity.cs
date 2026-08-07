@@ -91,7 +91,7 @@ public sealed class WorldEntity
         if (!labelCenter.HasValue) return false;
 
         var timing = _settings.Timing;
-        _input.MoveCursorTo(labelCenter.Value);
+        await _input.MoveCursorToAsync(labelCenter.Value);
         await _input.DelayAsync(Math.Max(10, timing.Polling.FastPollDelayMs.Value));
 
         // Hover confirmation is optional; the click happens either way.

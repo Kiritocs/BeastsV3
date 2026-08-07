@@ -93,7 +93,7 @@ public sealed class AtlasUi
             var anchor = await FindTooltipFreeProbeAsync(inner, passIndex: 0);
             if (!anchor.HasValue) return;
 
-            _input.MoveCursorTo(anchor.Value);
+            await _input.MoveCursorToAsync(anchor.Value);
             await _input.DelayAsync(Math.Max(35, _settings.Timing.Polling.FastPollDelayMs.Value));
 
             ScrollWheelDown();
@@ -261,11 +261,11 @@ public sealed class AtlasUi
         var endSettle = Math.Max(120, timing.Polling.UiCheckInitialSettleDelayMs.Value);
         var releaseSettle = Math.Max(90, timing.Polling.FastPollDelayMs.Value);
 
-        _input.MoveCursorTo(clampedStart);
+        await _input.MoveCursorToAsync(clampedStart);
         await _input.DelayAsync(preDelay);
         _input.LeftMouseDown();
         await _input.DelayAsync(holdSettle);
-        _input.MoveCursorTo(clampedEnd);
+        await _input.MoveCursorToAsync(clampedEnd);
         await _input.DelayAsync(endSettle);
         _input.LeftMouseUp();
         await _input.DelayAsync(releaseSettle);
@@ -310,7 +310,7 @@ public sealed class AtlasUi
             var probe = ClampToWindow(AdjustToSafeZone(normalized + offset, windowRect));
             if (!IsHoverPositionUsable(probe, windowRect)) continue;
 
-            _input.MoveCursorTo(probe);
+            await _input.MoveCursorToAsync(probe);
             await _input.DelayAsync(Math.Max(40, _settings.Timing.Polling.FastPollDelayMs.Value));
 
             if (!IsTooltipShowing()) return probe;

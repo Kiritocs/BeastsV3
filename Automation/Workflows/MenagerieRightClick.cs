@@ -284,7 +284,7 @@ public sealed class MenagerieRightClick
             // Aim, confirm, then fire.
             //
             // ClickAtAsync moves the cursor and clicks a fixed delay later
-            _input.MoveCursorTo(center);
+            await _input.MoveCursorToAsync(center);
 
             var confirmed = !_hoverGateEnabled ||
                 await _waits.WaitForAsync(() => source.IsHovered(item),

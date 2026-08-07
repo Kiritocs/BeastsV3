@@ -137,7 +137,7 @@ public sealed class MapDeviceLoad
         // Records the prepared cost breakdown for the upcoming map.
         CaptureCostBreakdown();
 
-        MoveCursorToActivateButton();
+        await MoveCursorToActivateButtonAsync();
         _runner.UpdateStatus($"Map Device loaded. {loadedTotal} item{ImGuiEx.PluralSuffix(loadedTotal)} placed. Cursor on Activate.");
     }
 
@@ -512,7 +512,7 @@ public sealed class MapDeviceLoad
         var rect = element.GetClientRect();
         var timing = _settings.Timing;
         await _input.ClickAtAsync(
-            new SharpVec2(rect.Center.X, rect.Center.Y),
+            rect,
             MouseButtons.Left,
             preDelayMs: timing.Clicks.UiClickPreDelayMs.Value,
             postDelayMs: timing.Clicks.CtrlClickPostDelayMs.Value);
@@ -574,7 +574,7 @@ public sealed class MapDeviceLoad
         _cost.SetPrepared(breakdown, usedDuplicatingScarabOverride: usesDupScarab);
     }
 
-    private void MoveCursorToActivateButton()
+    private async Task MoveCursorToActivateButtonAsync()
     {
         var button = _mapDevice.ActivateButton;
         if (button?.IsVisible != true)
@@ -582,8 +582,7 @@ public sealed class MapDeviceLoad
             Log.Debug("Activate button not visible after load - leaving cursor as-is.");
             return;
         }
-        var rect = button.GetClientRect();
-        _input.MoveCursorTo(new SharpVec2(rect.Center.X, rect.Center.Y));
+        await _input.MoveCursorToAsync(button.GetClientRect());
     }
 
     // ---- inventory + slot queries -------------------------------------
@@ -714,7 +713,7 @@ public sealed class MapDeviceLoad
         var rect = item.GetClientRect();
         var timing = _settings.Timing;
         await _input.ClickAtAsync(
-            new SharpVec2(rect.Center.X, rect.Center.Y),
+            rect,
             MouseButtons.Left,
             preDelayMs: timing.Clicks.CtrlClickPreDelayMs.Value,
             postDelayMs: timing.Clicks.CtrlClickPostDelayMs.Value,
@@ -739,7 +738,7 @@ public sealed class MapDeviceLoad
 
         var rect = item.GetClientRect();
         await _input.ClickAtAsync(
-            new SharpVec2(rect.Center.X, rect.Center.Y), MouseButtons.Left,
+            rect, MouseButtons.Left,
             preDelayMs: timing.Clicks.UiClickPreDelayMs.Value,
             postDelayMs: timing.Clicks.UiClickPostDelayMs.Value,
             modifiers: new[] { Keys.LShiftKey });
@@ -803,7 +802,7 @@ public sealed class MapDeviceLoad
         // Drops the cursor-held split into the slot.
         var destination = slotRect.Value;
         await _input.ClickAtAsync(
-            new SharpVec2(destination.Center.X, destination.Center.Y), MouseButtons.Left,
+            destination, MouseButtons.Left,
             preDelayMs: Math.Max(timing.Clicks.UiClickPreDelayMs.Value, 100),
             postDelayMs: timing.Clicks.CtrlClickPostDelayMs.Value);
 
