@@ -46,9 +46,10 @@ public sealed class FaustusList
     private readonly PriceService _prices;
     private readonly MerchantUi _merchant;
     private readonly InventoryUi _inventory;
+    private readonly HideoutTravel _hideoutTravel;
 
     public FaustusList(Runner runner, AutomationInput input, Waits waits, BeastsSettings settings,
-        PriceService prices, MerchantUi merchant, InventoryUi inventory)
+        PriceService prices, MerchantUi merchant, InventoryUi inventory, HideoutTravel hideoutTravel)
     {
         _runner = runner;
         _input = input;
@@ -57,6 +58,7 @@ public sealed class FaustusList
         _prices = prices;
         _merchant = merchant;
         _inventory = inventory;
+        _hideoutTravel = hideoutTravel;
     }
 
     public Task RunAsync()
@@ -162,6 +164,14 @@ public sealed class FaustusList
         }
 
         _input.ReleaseKeys(Keys.LControlKey, Keys.RControlKey, Keys.LShiftKey, Keys.RShiftKey, Keys.LMenu, Keys.RMenu);
+
+        // Faustus is only reachable from the hideout - travel there first rather than
+        // failing with an error telling the player to do it themselves.
+        if (!_hideoutTravel.IsInHideout)
+        {
+            _runner.UpdateStatus("Traveling to hideout for Faustus listing...");
+            await _hideoutTravel.EnsureInHideoutAsync(ct, "Faustus listing only works in the hideout.");
+        }
 
         // Refreshed before anything is priced, and while Faustus is still being opened —
         // the panel work overlaps the fetch, so in the common case this costs nothing.

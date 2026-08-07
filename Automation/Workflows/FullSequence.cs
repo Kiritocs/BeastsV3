@@ -7,7 +7,6 @@ using BeastsV3.Automation.Ui;
 using BeastsV3.Plugin.Settings;
 using BeastsV3.Shared;
 using ExileCore;
-using ImGuiNET;
 
 namespace BeastsV3.Automation.Workflows;
 
@@ -17,12 +16,6 @@ namespace BeastsV3.Automation.Workflows;
 public sealed class FullSequence
 {
     private const string MenagerieAreaName = "The Menagerie";
-
-    // Timeout for a zone change, sized for a cold load.
-    private const int TravelTimeoutMs = 15000;
-
-    // Delay after the loading screen clears before driving the UI.
-    private const int ZoneSettleMs = 750;
 
     // Upper bound on loop passes.
     private const int MaxPasses = 25;
@@ -36,10 +29,11 @@ public sealed class FullSequence
     private readonly FaustusList _faustusList;
     private readonly MerchantUi _merchant;
     private readonly InventoryUi _inventory;
+    private readonly HideoutTravel _hideoutTravel;
 
     public FullSequence(Runner runner, AutomationInput input, Waits waits, BeastsSettings settings,
         GameController game, Bestiary bestiary, FaustusList faustusList, MerchantUi merchant,
-        InventoryUi inventory)
+        InventoryUi inventory, HideoutTravel hideoutTravel)
     {
         _runner = runner;
         _input = input;
@@ -50,6 +44,7 @@ public sealed class FullSequence
         _faustusList = faustusList;
         _merchant = merchant;
         _inventory = inventory;
+        _hideoutTravel = hideoutTravel;
     }
 
     public Task RunAsync() =>
@@ -76,7 +71,7 @@ public sealed class FullSequence
         // Measured up front when the run starts in the hideout so the very first pass already
         // knows how little room is left; refreshed after each listing step, where the panel is
         // open anyway.
-        var faustusRoom = IsInHideout ? await MeasureFaustusRoomAsync(ct) : null;
+        var faustusRoom = _hideoutTravel.IsInHideout ? await MeasureFaustusRoomAsync(ct) : null;
 
         for (var pass = 1; pass <= MaxPasses; pass++)
         {
@@ -95,10 +90,10 @@ public sealed class FullSequence
             if (!IsInMenagerie)
             {
                 _runner.UpdateStatus("Full sequence: traveling to Menagerie...");
-                if (!await TravelViaChatAsync("/menagerie", () => IsInMenagerie, "Menagerie", ct))
+                if (!await _hideoutTravel.TravelViaChatAsync("/menagerie", () => IsInMenagerie, "Menagerie", ct))
                 {
                     _runner.UpdateStatus(
-                        $"Full sequence stopped: could not reach the Menagerie (still in '{CurrentAreaName}').");
+                        $"Full sequence stopped: could not reach the Menagerie (still in '{_hideoutTravel.CurrentAreaName}').");
                     return;
                 }
             }
@@ -138,10 +133,10 @@ public sealed class FullSequence
             }
 
             // Step 3: travel to the hideout.
-            if (!IsInHideout)
+            if (!_hideoutTravel.IsInHideout)
             {
                 _runner.UpdateStatus("Full sequence: traveling to hideout...");
-                if (!await TravelViaChatAsync("/hideout", () => IsInHideout, "hideout", ct))
+                if (!await _hideoutTravel.TravelViaChatAsync("/hideout", () => _hideoutTravel.IsInHideout, "hideout", ct))
                 {
                     _runner.UpdateStatus(
                         $"Full sequence stopped after itemizing {totalItemized} beast{ImGuiEx.PluralSuffix(totalItemized)}: could not reach hideout for the Faustus step.");
@@ -209,74 +204,9 @@ public sealed class FullSequence
 
     // ---- travel ---------------------------------------------------------
 
-    private string CurrentAreaName => _game?.Area?.CurrentArea?.Name ?? "<unknown>";
-
     // Matched on Area.Name, which carries no instance suffix.
     private bool IsInMenagerie =>
-        string.Equals(CurrentAreaName, MenagerieAreaName, StringComparison.OrdinalIgnoreCase);
-
-    private bool IsInHideout => _game?.Area?.CurrentArea?.IsHideout == true;
-
-    // Sends a travel chat command and waits for the destination, retrying once.
-    private async Task<bool> TravelViaChatAsync(
-        string command,
-        Func<bool> hasArrived,
-        string destinationLabel,
-        CancellationToken ct,
-        int maxAttempts = 2)
-    {
-        if (hasArrived()) return true;
-
-        for (var attempt = 1; attempt <= maxAttempts; attempt++)
-        {
-            ct.ThrowIfCancellationRequested();
-            Log.Debug($"Traveling to {destinationLabel} via '{command}'. attempt={attempt}, currentArea='{CurrentAreaName}'");
-
-            await SendChatCommandAsync(command);
-
-            if (await _waits.WaitForAsync(hasArrived, timeoutMs: TravelTimeoutMs, pollDelayMs: 250))
-            {
-                await WaitForZoneReadyAsync();
-                return true;
-            }
-
-            Log.Debug($"Did not reach {destinationLabel} on attempt {attempt}. currentArea='{CurrentAreaName}'");
-        }
-
-        return false;
-    }
-
-    // Waits for the loading screen to clear, then for the client to settle.
-    private async Task WaitForZoneReadyAsync()
-    {
-        await _waits.WaitForAsync(
-            () => _game?.IsLoading != true && _game?.InGame == true,
-            timeoutMs: TravelTimeoutMs,
-            pollDelayMs: 100);
-        await _input.DelayAsync(ZoneSettleMs);
-    }
-
-    // Sends a chat command by pasting it from the clipboard.
-    private async Task SendChatCommandAsync(string command)
-    {
-        var timing = _settings.Timing;
-
-        try { ImGui.SetClipboardText(command); }
-        catch (Exception ex) { Log.Debug($"Clipboard set failed: {ex.Message}"); }
-
-        // Enter opens chat, Ctrl+V pastes, Enter sends.
-        await _input.TapKeyAsync(Keys.Enter,
-            downHoldMs: timing.Clicks.KeyTapDelayMs.Value,
-            postDelayMs: timing.Polling.UiCheckInitialSettleDelayMs.Value);
-
-        await _input.CtrlTapKeyAsync(Keys.V,
-            downHoldMs: timing.Clicks.KeyTapDelayMs.Value,
-            postDelayMs: timing.Polling.UiCheckInitialSettleDelayMs.Value);
-
-        await _input.TapKeyAsync(Keys.Enter,
-            downHoldMs: timing.Clicks.KeyTapDelayMs.Value,
-            postDelayMs: timing.Polling.FastPollDelayMs.Value);
-    }
+        string.Equals(_hideoutTravel.CurrentAreaName, MenagerieAreaName, StringComparison.OrdinalIgnoreCase);
 
     private Keys[] PassthroughKeys()
     {

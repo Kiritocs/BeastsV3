@@ -44,10 +44,11 @@ public sealed class MapDeviceLoad
     private readonly PriceService _prices;
     private readonly Restock _restock;
     private readonly BatchClicker _batch;
+    private readonly HideoutTravel _hideoutTravel;
 
     public MapDeviceLoad(Runner runner, AutomationInput input, Waits waits, BeastsSettings settings,
         GameController game, MapDeviceUi mapDevice, AtlasUi atlas, InventoryUi inventory,
-        CostTracker cost, PriceService prices, Restock restock)
+        CostTracker cost, PriceService prices, Restock restock, HideoutTravel hideoutTravel)
     {
         _restock = restock;
         _batch = new BatchClicker(input, settings);
@@ -61,6 +62,7 @@ public sealed class MapDeviceLoad
         _inventory = inventory;
         _cost = cost;
         _prices = prices;
+        _hideoutTravel = hideoutTravel;
     }
 
     public Task RunAsync() =>
@@ -80,6 +82,14 @@ public sealed class MapDeviceLoad
 
     public async Task RunBodyAsync(CancellationToken ct)
     {
+        // The Map Device only exists in the hideout - travel there first rather than
+        // failing with an error telling the player to do it themselves.
+        if (!_hideoutTravel.IsInHideout)
+        {
+            _runner.UpdateStatus("Traveling to hideout for Map Device loading...");
+            await _hideoutTravel.EnsureInHideoutAsync(ct, "Map device loading only works in the hideout.");
+        }
+
         // Walks to the map device if its window is not already up.
         if (!_mapDevice.IsWindowVisible && _atlas.IsVisible != true)
         {

@@ -69,6 +69,7 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
     private ClipboardAutoPaste _clipboardAutoPaste;
     private Bestiary _bestiary;
     private MerchantUi _merchantUi;
+    private HideoutTravel _hideoutTravel;
     private FaustusList _faustusList;
     private StashUi _stashUi;
     private MapStashUi _mapStashUi;
@@ -153,7 +154,8 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
         _quickButtons = new QuickButtons(GameController, Settings, _runner, _bestiaryUi, _menagerieRightClick);
         _clipboardAutoPaste = new ClipboardAutoPaste(Settings, _runner, _automationInput, _bestiaryUi);
         _merchantUi = new MerchantUi(GameController, _worldEntity);
-        _faustusList = new FaustusList(_runner, _automationInput, _waits, Settings, _prices, _merchantUi, _inventoryUi);
+        _hideoutTravel = new HideoutTravel(_automationInput, _waits, Settings, GameController);
+        _faustusList = new FaustusList(_runner, _automationInput, _waits, Settings, _prices, _merchantUi, _inventoryUi, _hideoutTravel);
         _mapStashUi = new MapStashUi(GameController, _automationInput, _waits, Settings, _stashUi);
         _restock = new Restock(_runner, _automationInput, _waits, Settings, _stashUi, _mapStashUi, _inventoryUi);
         _capturedMonsterStash = new CapturedMonsterStash(_automationInput, _waits, Settings, _stashUi, _inventoryUi,
@@ -162,13 +164,13 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
         _mapDeviceUi = new MapDeviceUi(GameController, _worldEntity);
         _atlasUi = new AtlasUi(GameController, _automationInput, _waits, Settings);
         _tabPickers = new TabPickers(Settings, _stashUi, _merchantUi, _atlasUi);
-        _mapDeviceLoad = new MapDeviceLoad(_runner, _automationInput, _waits, Settings, GameController, _mapDeviceUi, _atlasUi, _inventoryUi, _cost, _prices, _restock);
+        _mapDeviceLoad = new MapDeviceLoad(_runner, _automationInput, _waits, Settings, GameController, _mapDeviceUi, _atlasUi, _inventoryUi, _cost, _prices, _restock, _hideoutTravel);
 
         _bestiary = new Bestiary(_runner, _automationInput, _waits, Settings, _bestiaryUi, _inventoryUi, _clipboardAutoPaste, _capturedMonsterStash);
         _quickButtons.StartItemizeAll = () => Log.FireAndForget(() => _bestiary.ItemizeAllAsync(), "Bestiary itemize all");
         _quickButtons.StartDeleteAll = () => Log.FireAndForget(() => _bestiary.DeleteAllAsync(), "Bestiary delete all");
 
-        _fullSequence = new FullSequence(_runner, _automationInput, _waits, Settings, GameController, _bestiary, _faustusList, _merchantUi, _inventoryUi);
+        _fullSequence = new FullSequence(_runner, _automationInput, _waits, Settings, GameController, _bestiary, _faustusList, _merchantUi, _inventoryUi, _hideoutTravel);
 
         _prices.LoadPersisted();
         _prices.SyncLeagueFromServerData();
