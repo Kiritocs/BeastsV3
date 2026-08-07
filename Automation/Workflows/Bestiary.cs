@@ -73,7 +73,7 @@ public sealed class Bestiary
             ct => RunClearAsync(ct, deleteMode: true, applyRegex: false),
             failureLabel: "Bestiary delete",
             passthroughKeys: PassthroughKeys(),
-            uiCleanupOptions: new UiCleanupOptions { KeepBestiary = true },
+            uiCleanupOptions: new UiCleanupOptions { KeepBestiary = true, KeepInventory = true },
             cancelledStatus: "Bestiary delete cancelled.",
             isBestiaryClearRunning: true,
             clearBestiaryDeleteModeOverride: true);
@@ -83,7 +83,7 @@ public sealed class Bestiary
             ct => RunClearAsync(ct, deleteMode: false, applyRegex: false),
             failureLabel: "Bestiary itemize",
             passthroughKeys: PassthroughKeys(),
-            uiCleanupOptions: new UiCleanupOptions { KeepBestiary = true },
+            uiCleanupOptions: new UiCleanupOptions { KeepBestiary = true, KeepInventory = true },
             cancelledStatus: "Bestiary itemize cancelled.",
             isBestiaryClearRunning: true);
 
@@ -92,7 +92,7 @@ public sealed class Bestiary
             ct => RunClearAsync(ct, deleteMode: false, applyRegex: true),
             failureLabel: "Bestiary regex itemize",
             passthroughKeys: PassthroughKeys(),
-            uiCleanupOptions: new UiCleanupOptions { KeepBestiary = true },
+            uiCleanupOptions: new UiCleanupOptions { KeepBestiary = true, KeepInventory = true },
             cancelledStatus: "Bestiary regex itemize cancelled.",
             isBestiaryClearRunning: true);
 
