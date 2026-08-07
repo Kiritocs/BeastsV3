@@ -33,7 +33,7 @@ public static class Changelog
         new(2026, 8, 7, 2,
             "Automation: added an Input Humanization system (off by default, under Timing) - Gaussian-jittered delays, WindMouse curved cursor travel, off-centre click points, randomized key-hold times, and occasional hesitation pauses with optional cursor drift.",
             "Automation: three Humanization presets (Light, Human, Paranoid) to set a coherent starting point in one click; every knob stays individually editable afterwards.",
-            "Visibility: added a 'Hide while Large Map is open' option to the overlays settings")
+            "World Labels: added a 'Hide while Large Map is open' option to the overlays settings")
     ];
 
     // Entries newest first, sorted once at load.
