@@ -100,6 +100,16 @@ public sealed class Runner
         if (!_state.IsBestiaryClearRunning) UpdateStatus("Stopping...");
     }
 
+    // Checks for panic stop hotkey and stops if pressed. Works anytime without requiring workflow matching.
+    public void CheckPanicStop(HotkeyNodeV2 panicStopHotkey)
+    {
+        if (panicStopHotkey == null || !IsRunning) return;
+        if (!_hotkeys.TryGet(panicStopHotkey, isRunning: true, out var key, out var usedHeldFallback)) return;
+
+        Log.Info($"Panic stop activated! key={key}");
+        RequestStop();
+    }
+
     // ---- status helpers ------------------------------------------------
 
     // Sets the overlay status text and logs it. Identical consecutive lines are collapsed

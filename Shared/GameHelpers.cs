@@ -8,15 +8,44 @@ public static class GameHelpers
 {
     public const string MenagerieAreaName = "The Menagerie";
 
+    public static bool IsMenagerie(AreaInstance area) =>
+        string.Equals(TryGetAreaName(area), MenagerieAreaName, StringComparison.OrdinalIgnoreCase);
+
     public static bool IsHideoutLike(AreaInstance area) =>
-        area?.IsHideout == true ||
-        string.Equals(area?.Name, MenagerieAreaName, StringComparison.OrdinalIgnoreCase);
+        area?.IsHideout == true || IsMenagerie(area);
 
     public static bool IsTownOrHideout(AreaInstance area) =>
         area?.IsTown == true || area?.IsPeaceful == true || IsHideoutLike(area);
 
     public static bool IsRunnableMap(AreaInstance area) =>
-        area is { IsTown: false } && !IsHideoutLike(area);
+        area is { IsTown: false } && !IsHideoutLike(area) && !IsSpecialNonBeastMap(area);
+
+    // Area ID substrings that mark special maps with no monsters/beasts to track.
+    private static readonly string[] SpecialNonBeastMapIdMarkers =
+    {
+        "MapAtlasEncounter_",
+        "Expedition",
+        "BetrayalSafeHouse",
+        "MapWorldsTropicalIslandUnique",
+        "HarvestLeagueMemoryLine",
+    };
+
+    // True for special maps (atlas encounters, Expedition, etc.) that contain no trackable beasts.
+    public static bool IsSpecialNonBeastMap(AreaInstance area)
+    {
+        if (area == null) return false;
+        var areaId = TryGetAreaId(area);
+        if (string.IsNullOrWhiteSpace(areaId)) return false;
+
+        foreach (var marker in SpecialNonBeastMapIdMarkers)
+        {
+            if (areaId.Contains(marker, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
+    }
+
+    public static string TryGetAreaId(AreaInstance area) =>
+        area?.Area == null ? null : TryReadPropertyString(area.Area, "Id") ?? TryReadPropertyString(area.Area, "RawName");
 
     public static string TryGetAreaHashText(AreaInstance area) =>
         area == null ? null : TryReadPropertyString(area, "AreaHash") ?? TryReadPropertyString(area, "Hash");

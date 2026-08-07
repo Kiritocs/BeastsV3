@@ -429,6 +429,18 @@ public sealed class FaustusList
                 throw new InvalidOperationException("Timed out waiting for the Faustus price popup.");
         }
 
+        // Faustus remembers whichever currency was last used in this popup - including one a
+        // user picked manually before the run - and keeps reusing it for every listing after
+        // that. Beast prices are always in chaos, so it is forced back once per run; once
+        // corrected this is a single memory read for every later item.
+        await EnsureListingCurrencyAsync();
+
+        // The currency dropdown steals input focus from the price field while it's being
+        // clicked through, which otherwise leaves the Ctrl+A/Backspace/digits below typing
+        // into nothing and the field stuck on its previous value. Re-clicking it is cheap
+        // and harmless even when the currency needed no correction at all.
+        await FocusPriceFieldAsync();
+
         var timing = _settings.Timing;
 
         // The popup retains the previous price, so typing is skipped when it already matches.
@@ -480,6 +492,94 @@ public sealed class FaustusList
             pollDelayMs: timing.Polling.FastPollDelayMs.Value);
 
         return MerchantUi.PopupPriceMatches(observed, priceText);
+    }
+
+    // Re-clicks the price amount field, restoring focus after the currency dropdown was
+    // clicked through. A no-op-ish click when focus never left it.
+    private async Task FocusPriceFieldAsync()
+    {
+        var rect = _merchant.PriceAmountInput?.GetClientRect();
+        if (rect == null) return;
+
+        var timing = _settings.Timing;
+        await _input.ClickAtAsync(new SharpVec2(rect.Value.Center.X, rect.Value.Center.Y), MouseButtons.Left,
+            preDelayMs: timing.Clicks.UiClickPreDelayMs.Value, postDelayMs: timing.Clicks.UiClickPostDelayMs.Value);
+    }
+
+    // ---- listing currency ----------------------------------------------
+
+    private const string ListingCurrencyName = "Chaos Orb";
+
+    // The dropdown does not reopen scrolled to the top - it reopens pinned near whatever is
+    // currently selected. A missed click commits a new (still wrong) selection and closes it,
+    // so the scroll-to-top has to happen again before every attempt, not once before the loop -
+    // otherwise each miss re-anchors the next attempt further from Chaos Orb instead of back at
+    // the top, which is what turned one bad guess into a steady drift down the list.
+    private const int CurrencyScrollUpTicks = 30;
+
+    // Rows are not exposed as separate elements (the list is one drawn region), so the first
+    // row's position is found by probing a few plausible offsets from the list top and reading
+    // the actual selection back after each click, rather than trusting one guessed row height.
+    private static readonly float[] CurrencyRowOffsetsPx = { 10f, 18f, 26f, 34f, 44f, 56f };
+
+    // Forces the Faustus price popup's currency back to Chaos Orb if something else - most
+    // likely a currency a user picked manually before this run - is currently selected.
+    // A no-op past the first correction, since the dropdown then keeps reading back correctly.
+    private async Task EnsureListingCurrencyAsync()
+    {
+        if (string.Equals(_merchant.PopupCurrencyName(), ListingCurrencyName, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var timing = _settings.Timing;
+
+        foreach (var offset in CurrencyRowOffsetsPx)
+        {
+            if (_merchant.PriceCurrencyDropdown?.IsOpened != true && !await ToggleCurrencyDropdownAsync())
+            {
+                Log.Warn("Faustus price currency dropdown would not open - leaving the listing currency as-is.");
+                return;
+            }
+
+            var boxRect = _merchant.PriceCurrencyDropdown?.GetClientRect();
+            if (boxRect == null) break;
+
+            // Scrolled to the top before this attempt's click, every time - see comment above.
+            _input.MoveCursorTo(new SharpVec2(boxRect.Value.Center.X, boxRect.Value.Bottom + 20));
+            _input.ScrollWheel(CurrencyScrollUpTicks);
+            await _input.DelayAsync(timing.Clicks.UiClickPostDelayMs.Value);
+
+            var rowPos = new SharpVec2(boxRect.Value.Center.X, boxRect.Value.Bottom + offset);
+            await _input.ClickAtAsync(rowPos, MouseButtons.Left,
+                preDelayMs: timing.Clicks.UiClickPreDelayMs.Value, postDelayMs: timing.Clicks.UiClickPostDelayMs.Value);
+
+            if (await _waits.WaitForAsync(
+                    () => string.Equals(_merchant.PopupCurrencyName(), ListingCurrencyName, StringComparison.OrdinalIgnoreCase),
+                    300, timing.Polling.FastPollDelayMs.Value))
+            {
+                // Selecting normally closes the dropdown on its own; only nudge it shut if not.
+                if (_merchant.PriceCurrencyDropdown?.IsOpened == true) await ToggleCurrencyDropdownAsync();
+                return;
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"Could not switch the Faustus price currency to '{ListingCurrencyName}'. It is currently set to " +
+            $"'{_merchant.PopupCurrencyName() ?? "an unknown currency"}', which would misprice every beast in " +
+            "this run - set it to Chaos Orb manually once in the popup and re-run.");
+    }
+
+    private async Task<bool> ToggleCurrencyDropdownAsync()
+    {
+        var timing = _settings.Timing;
+        var boxRect = _merchant.PriceCurrencyDropdown?.GetClientRect();
+        if (boxRect == null) return false;
+
+        var wasOpened = _merchant.PriceCurrencyDropdown?.IsOpened == true;
+        await _input.ClickAtAsync(new SharpVec2(boxRect.Value.Center.X, boxRect.Value.Center.Y), MouseButtons.Left,
+            preDelayMs: timing.Clicks.UiClickPreDelayMs.Value, postDelayMs: timing.Clicks.UiClickPostDelayMs.Value);
+
+        return await _waits.WaitForAsync(() => _merchant.PriceCurrencyDropdown?.IsOpened == !wasOpened, 500,
+            timing.Polling.FastPollDelayMs.Value);
     }
 
     // ---- shop-tab helpers ---------------------------------------------

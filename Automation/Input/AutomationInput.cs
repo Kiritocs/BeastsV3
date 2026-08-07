@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using BeastsV3.Plugin.Settings;
@@ -234,6 +235,23 @@ public sealed class AutomationInput
     {
         _inputLock.AllowMouse();
         ExileCore.Input.LeftUp();
+    }
+
+    // ---- scroll wheel ----------------------------------------------------
+
+    private const uint MouseEventWheel = 0x0800;
+    private const int MouseWheelDelta = 120;
+
+    [DllImport("user32.dll")]
+    private static extern void mouse_event(uint dwFlags, uint dx, uint dy, int dwData, UIntPtr dwExtraInfo);
+
+    // Scrolls the wheel at the current cursor position. Positive ticks scroll up, negative
+    // scroll down.  Move the cursor over the target element first, this does not aim itself.
+    public void ScrollWheel(int ticks)
+    {
+        if (ticks == 0) return;
+        _inputLock.AllowMouse();
+        mouse_event(MouseEventWheel, 0, 0, ticks * MouseWheelDelta, UIntPtr.Zero);
     }
 
     private SharpVec2 ClampToGameWindow(SharpVec2 position)

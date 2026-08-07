@@ -64,6 +64,23 @@ public sealed class MerchantUi
 
     public bool IsPopupVisible => PopupWindow?.IsVisible == true;
 
+    // Same popup slot as PopupWindow, typed so its price controls can be read directly
+    // instead of walking child-index paths.
+    public AsyncItemRightClickPriceMenu PriceMenu => _game?.IngameState?.IngameUi?.AsyncItemRightClickPriceMenu;
+
+    public DropdownElement PriceCurrencyDropdown => PriceMenu?.PriceCurrencyDropdown;
+
+    public Element PriceAmountInput => PriceMenu?.PriceAmountInput;
+
+    // Name of the currency currently selected in the Faustus price popup, or null when unreadable.
+    public string PopupCurrencyName()
+    {
+        var dropdown = PriceCurrencyDropdown;
+        var options = dropdown?.Options;
+        var index = dropdown?.RememberedSelection ?? -1;
+        return options != null && index >= 0 && index < options.Count ? options[index]?.Name : null;
+    }
+
     // Items visible in the current merchant panel view.
     public IList<NormalInventoryItem> VisibleItems => Panel?.VisibleStash?.VisibleInventoryItems;
 

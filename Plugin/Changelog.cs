@@ -21,6 +21,15 @@ public static class Changelog
             "Restock and Map Device loading now ctrl-click a whole pass of items and confirm once, instead of confirming every item before clicking the next. Turn off Automation: Timing -> Batch Item Transfers if transfers get dropped.",
             "Diagnostics: session log file with rollover, plus a Dump Diagnostics button and hotkey for bug reports.",
             "Ships disabled with every hotkey unbound - nothing runs until you configure it."),
+        new(2026, 8, 6, 1,
+            "Fixed beast detection breaking after the latest PoE patch.",
+            "Diagnostics: added a periodic heartbeat log of beast detection status, to make future breakage easier to spot.",
+            "Web Dashboard is now enabled by default.",
+            "Fixed beast labels and the tracked-beasts window not respecting the hideout visibility setting."),
+        new(2026, 8, 7, 1,
+            "Automation: added a Panic Stop hotkey that halts any running automation immediately, independent of workflow state or visible UI panels.",
+            "Faustus listing: the price popup's currency is now forced back to Chaos Orb if something else was selected, instead of silently mispricing every listed beast.",
+            "Overlays: beast markers, world labels, the tracked-beasts window, the counter and the analytics overlay are now also hidden in non-trackable special areas (Menagerie, atlas encounters, Expedition, Betrayal safehouses), not just town and hideout."),
     ];
 
     // Entries newest first, sorted once at load.

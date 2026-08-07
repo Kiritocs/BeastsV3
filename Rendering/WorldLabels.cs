@@ -40,7 +40,7 @@ public sealed class WorldLabels
     public void RenderInWorld()
     {
         if (!_settings.MapRender.ShowBeastLabelsInWorld.Value) return;
-        if (_settings.Visibility.HideInHideout.Value && GameHelpers.IsTownOrHideout(_game.Area?.CurrentArea)) return;
+        if (_settings.Visibility.HideInHideout.Value && (GameHelpers.IsTownOrHideout(_game.Area?.CurrentArea) || !GameHelpers.IsRunnableMap(_game.Area?.CurrentArea))) return;
         // Nothing is tracked inside a banked map.
         if (_isInFinalizedMap()) return;
 
@@ -86,7 +86,7 @@ public sealed class WorldLabels
     public void RenderTrackedBeastsWindow()
     {
         if (!_settings.MapRender.ShowTrackedBeastsWindow.Value) return;
-        if (_settings.Visibility.HideInHideout.Value && GameHelpers.IsTownOrHideout(_game.Area?.CurrentArea)) return;
+        if (_settings.Visibility.HideInHideout.Value && (GameHelpers.IsTownOrHideout(_game.Area?.CurrentArea) || !GameHelpers.IsRunnableMap(_game.Area?.CurrentArea))) return;
         if (_isInFinalizedMap()) return;
         if (_tracker.Markers.Count == 0) return;
 

@@ -35,6 +35,9 @@ public class BeastsSettings : ISettings
     [Menu("Automation: Full Sequence", "One-key: Bestiary regex-itemize -> travel to hideout -> Faustus list.")]
     public HotkeyNodeV2 FullSequenceHotkey { get; set; } = new(System.Windows.Forms.Keys.None);
 
+    [Menu("Automation: Panic Stop", "Emergency stop for any running automation. Works anytime, doesn't require UI panels to be visible.")]
+    public HotkeyNodeV2 PanicStopHotkey { get; set; } = new(System.Windows.Forms.Keys.None);
+
     [Menu("Automation: Bestiary", "Bestiary itemize / delete / quick-button hotkeys and options.")]
     public BestiaryAutomationSettings BestiaryAutomation { get; set; } = new();
 

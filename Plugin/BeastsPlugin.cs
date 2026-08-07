@@ -434,6 +434,9 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
         _quickButtons.Render();
         _clipboardAutoPaste.Tick();
 
+        // Emergency stop: works anytime without requiring the hotkey to match a workflow.
+        CheckPanicStopHotkey();
+
         _runner.CheckHotkey(Settings.BestiaryAutomation.DeleteHotkey, "Bestiary delete",
             () => _bestiary.DeleteAllAsync());
         _runner.CheckHotkey(Settings.BestiaryAutomation.RegexItemizeHotkey, "Bestiary regex itemize",
@@ -472,6 +475,12 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
             _settingsMenu = null;
             base.DrawSettings();
         }
+    }
+
+    // Checks for panic stop hotkey press and stops any running automation immediately.
+    private void CheckPanicStopHotkey()
+    {
+        _runner.CheckPanicStop(Settings.PanicStopHotkey);
     }
 
     // Clears live session state when analytics is toggled off.

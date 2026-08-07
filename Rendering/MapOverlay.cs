@@ -2,6 +2,7 @@ using System;
 using BeastsV3.Beasts;
 using BeastsV3.Plugin.Settings;
 using BeastsV3.Route;
+using BeastsV3.Shared;
 using ExileCore;
 using ExileCore.PoEMemory.Components;
 using ImGuiNET;
@@ -79,8 +80,9 @@ public sealed class MapOverlay
         var largeMap = _game.IngameState.IngameUi.Map.LargeMap;
         MapScale = largeMap.MapScale;
 
-        // Markers are hidden in a banked map; the route below still draws.
-        if (_settings.MapRender.ShowBeastsOnMap.Value && !_isInFinalizedMap())
+        // Markers are hidden in a banked map, non-trackable areas (Menagerie, hideout), and special atlas encounters.
+        if (_settings.MapRender.ShowBeastsOnMap.Value && !_isInFinalizedMap() &&
+            !GameHelpers.IsTownOrHideout(_game.Area?.CurrentArea) && GameHelpers.IsRunnableMap(_game.Area?.CurrentArea))
         {
             DrawBeastMarkers(largeMap.MapCenter);
         }

@@ -163,7 +163,7 @@ public sealed class Counter
                 }
             }
         }
-        if (visibility.HideInHideout.Value && GameHelpers.IsTownOrHideout(_game.Area?.CurrentArea))
+        if (visibility.HideInHideout.Value && (GameHelpers.IsTownOrHideout(_game.Area?.CurrentArea) || !GameHelpers.IsRunnableMap(_game.Area?.CurrentArea)))
             return false;
         if (visibility.HideOnLeftPanelOpen.Value && ingameUi.OpenLeftPanel?.IsVisible == true)
             return false;

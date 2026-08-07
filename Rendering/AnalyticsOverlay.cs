@@ -76,7 +76,7 @@ public sealed class AnalyticsOverlay
             foreach (var panel in ui.FullscreenPanels)
                 if (panel.IsVisible) return false;
         }
-        if (visibility.HideInHideout.Value && GameHelpers.IsTownOrHideout(_game.Area?.CurrentArea))
+        if (visibility.HideInHideout.Value && (GameHelpers.IsTownOrHideout(_game.Area?.CurrentArea) || !_recorder.State.IsCurrentAreaTrackable))
             return false;
         if (visibility.HideOnLeftPanelOpen.Value && ui.OpenLeftPanel?.IsVisible == true)
             return false;
