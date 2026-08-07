@@ -81,8 +81,10 @@ public sealed class BeastTracker
     public IReadOnlyList<TrackedBeastMarker> Markers => _markerSnapshot;
 
     // Resets area state. When startingNewMap is false, counts and markers are kept and only
-    // the live entity map and per-entity caches are dropped.
-    public void OnAreaChanged(bool startingNewMap = true)
+    // the live entity map and per-entity caches are dropped. isTrackableArea describes the
+    // area just entered, so a return from a side zone can restart the
+    // capturing-grace clock instead of resolving it against time spent away.
+    public void OnAreaChanged(bool startingNewMap = true, bool isTrackableArea = true)
     {
         _liveTracked.Clear();
 
@@ -94,8 +96,20 @@ public sealed class BeastTracker
 
         if (!startingNewMap)
         {
+            var now = DateTime.UtcNow;
+
             // Demote every marker to cached until Reconcile sees its entity again.
-            MarkAllCached(DateTime.UtcNow);
+            MarkAllCached(now);
+
+            if (isTrackableArea)
+            {
+                // Back in a trackable map: a marker that was mid-capture when we left has been
+                // sitting cached the whole time. Restart its grace clock here rather than
+                // resolving it against however long we spent in a side zone, which would drop
+                // it as "captured" without ever crediting the capture.
+                RefreshCapturingMarkersTimestamp(now);
+            }
+
             RebuildMarkerSnapshot();
             return;
         }
@@ -104,6 +118,23 @@ public sealed class BeastTracker
         _capturedIds.Clear();
         _markers.Clear();
         _markerSnapshot.Clear();
+    }
+
+    // Restamps LastSeenUtc on cached markers still mid-capture, so their grace timeout is
+    // measured from "back in the map" rather than from before a side-zone detour.
+    private void RefreshCapturingMarkersTimestamp(DateTime nowUtc)
+    {
+        _scratchIds.Clear();
+        foreach (var (id, marker) in _markers)
+        {
+            if (!marker.IsLive && marker.CaptureState == BeastCaptureState.Capturing)
+                _scratchIds.Add(id);
+        }
+
+        foreach (var id in _scratchIds)
+        {
+            _markers[id] = _markers[id] with { LastSeenUtc = nowUtc };
+        }
     }
 
     // Flips every live marker to cached and stamps the time.
@@ -348,6 +379,13 @@ public sealed class BeastTracker
     {
         _scratchIds.Clear();
 
+        // Resolving a stalled capture only means something while we're actually in the map.
+        // If we've stepped into a non-trackable side zone (Starfall Crater, hideout, ...),
+        // elapsed real time there is not a reliable signal for what happened to the entity;
+        // letting the timeout fire anyway would silently drop the marker as "captured"
+        // without analytics ever crediting it, since it isn't running there either.
+        var areaTrackable = GameHelpers.IsRunnableMap(_game?.Area?.CurrentArea);
+
         // Removals are collected and applied after the loop.
         foreach (var (id, marker) in _markers)
         {
@@ -359,6 +397,8 @@ public sealed class BeastTracker
                 _markers[id] = marker with { IsLive = false, LastSeenUtc = nowUtc };
                 continue;
             }
+
+            if (!areaTrackable) continue;
 
             if (marker.CaptureState == BeastCaptureState.Capturing &&
                 nowUtc - marker.LastSeenUtc > CapturingGrace)

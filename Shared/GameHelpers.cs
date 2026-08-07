@@ -30,17 +30,35 @@ public static class GameHelpers
         "HarvestLeagueMemoryLine",
     };
 
+    // Area display names that mark special maps with no monsters/beasts to track.
+    private static readonly string[] SpecialNonBeastMapNames =
+    {
+        "Starfall Crater",
+    };
+
     // True for special maps (atlas encounters, Expedition, etc.) that contain no trackable beasts.
     public static bool IsSpecialNonBeastMap(AreaInstance area)
     {
         if (area == null) return false;
-        var areaId = TryGetAreaId(area);
-        if (string.IsNullOrWhiteSpace(areaId)) return false;
 
-        foreach (var marker in SpecialNonBeastMapIdMarkers)
+        var areaId = TryGetAreaId(area);
+        if (!string.IsNullOrWhiteSpace(areaId))
         {
-            if (areaId.Contains(marker, StringComparison.OrdinalIgnoreCase)) return true;
+            foreach (var marker in SpecialNonBeastMapIdMarkers)
+            {
+                if (areaId.Contains(marker, StringComparison.OrdinalIgnoreCase)) return true;
+            }
         }
+
+        var areaName = TryGetAreaName(area);
+        if (!string.IsNullOrWhiteSpace(areaName))
+        {
+            foreach (var name in SpecialNonBeastMapNames)
+            {
+                if (string.Equals(areaName, name, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+        }
+
         return false;
     }
 

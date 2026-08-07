@@ -330,7 +330,7 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
         // An unclassifiable transition is treated as a new map.
         var startingNewMap = decision is null || decision.Kind == AreaTransitionKind.EnteredNewTrackableMap;
 
-        _tracker?.OnAreaChanged(startingNewMap);
+        _tracker?.OnAreaChanged(startingNewMap, GameHelpers.IsRunnableMap(area));
         _counter?.OnAreaChanged();
         _explorationRoute?.OnAreaChanged();
         _navigate?.InvalidateNavigator();
