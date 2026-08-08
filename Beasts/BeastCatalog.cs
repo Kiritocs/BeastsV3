@@ -99,11 +99,23 @@ public static class BeastCatalog
             beastName.StartsWith("Fenumus,", StringComparison.OrdinalIgnoreCase))
             return "Spirit Bosses";
 
-        if (beastName.StartsWith("Wild ", StringComparison.OrdinalIgnoreCase) ||
-            beastName.StartsWith("Primal ", StringComparison.OrdinalIgnoreCase) ||
-            beastName.StartsWith("Vivid ", StringComparison.OrdinalIgnoreCase) ||
+        if (string.Equals(beastName, "Wild Bristle Matron", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(beastName, "Wild Hellion Alpha", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(beastName, "Wild Brambleback", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(beastName, "Primal Cystcaller", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(beastName, "Primal Rhex Matriarch", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(beastName, "Black Mórrigan", StringComparison.OrdinalIgnoreCase))
-            return "Harvest / Specials";
+            return "The Wilds";
+
+        if (string.Equals(beastName, "Primal Crushclaw", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(beastName, "Vivid Watcher", StringComparison.OrdinalIgnoreCase))
+            return "The Deep";
+
+        if (string.Equals(beastName, "Vivid Vulture", StringComparison.OrdinalIgnoreCase))
+            return "The Sands";
+
+        if (string.Equals(beastName, "Vivid Abberarach", StringComparison.OrdinalIgnoreCase))
+            return "The Caverns";
 
         return "Other";
     }
