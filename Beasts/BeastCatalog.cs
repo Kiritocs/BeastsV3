@@ -36,7 +36,6 @@ public static class BeastCatalog
         new("Farric Gargantuan",          ["Metadata/Monsters/LeagueBestiary/BeastCaveBestiary"],             "c ga"),
         new("Farric Taurus",              ["Metadata/Monsters/LeagueBestiary/BestiaryBull"],                  "ic ta"),
         new("Farric Ursa",                ["Metadata/Monsters/LeagueBestiary/DropBearBestiary"],              "c u"),
-        new("Vicious Hound",              ["Metadata/Monsters/LeagueBestiary/PurgeHoundBestiary"],            "s ho"),
 
         // Fenumal (The Caverns)
         new("Fenumal Hybrid Arachnid",  ["Metadata/Monsters/LeagueBestiary/SpiderPlatedBestiary"],           "l hy"),
