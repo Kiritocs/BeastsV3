@@ -25,8 +25,7 @@ public sealed class BestiaryUi
     // Path to the Challenges category bar container; its children reorder.
     private static readonly int[] ChallengesEntriesRootPath = { 2, 0, 1, 0 };
 
-    // Bestiary's slot in the category bar, left to right.
-    private const int BestiaryCategoryIndexFromLeft = 1;
+    private const int BestiaryCategoryIndexFromLeft = 2;
 
     // Fraction of a row that must lie inside the viewport to be clickable or drawable.
     private const float MinClickOverlap = 0.9f;
