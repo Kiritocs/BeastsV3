@@ -10,6 +10,10 @@ public static class Changelog
 {
     private static readonly ChangelogEntry[] Entries =
     [
+        new(2026, 8, 23, 1,
+            "Map Device load: a quantity of two stacks now keeps two slots filled.",
+            "Map Device load: slots beyond what your quantity asks for go back to your inventory.",
+            "Map Device load: stops when the device cannot be filled, instead of running the map short."),
         new(2026, 8, 18, 1,
             "First public release (1.0.0)."),
     ];

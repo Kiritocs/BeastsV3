@@ -466,7 +466,7 @@ public class RestockSettings
     [Menu("Auto-Restock Missing Map Device Items", "When Map Device load finds a target short across the device slots, device storage and inventory, run Restock first instead of loading a partial device.")]
     public ToggleNode AutoRestockMissingMapDeviceItems { get; set; } = new(true);
 
-    [Menu("Clear Non-Target Map Device Items", "Before loading, ctrl-click anything in the Map Device slots that isn't one of your targets back into inventory. Off leaves it in place, and a target with no free slot fails instead.")]
+    [Menu("Clear Non-Target Map Device Items", "Before loading, ctrl-click anything in the Map Device slots that isn't one of your targets back into inventory, and trim a target spread over more slots than its quantity asks for. Off leaves it in place, and a target with no free slot fails instead.")]
     public ToggleNode ClearNonTargetMapDeviceItems { get; set; } = new(true);
 
     [Menu("Enable Map Regex Filter", "Before pulling a 'Map (Tier N)' target, paste the pattern below into the map-stash search bar and take only highlighted matches. Applies to map targets only - fragment and scarab targets are untouched.")]
