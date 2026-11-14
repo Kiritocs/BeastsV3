@@ -2,7 +2,7 @@ using System;
 using System.Numerics;
 using BeastsV3.Shared;
 using ExileCore.PoEMemory.MemoryObjects;
-using ImGuiNET;
+using Hexa.NET.ImGui;
 using Color = SharpDX.Color;
 using Vector3 = System.Numerics.Vector3;
 
@@ -54,8 +54,8 @@ public static class RenderPrimitives
         }
 
         var fillColor = color with { A = SharpDX.Color.ToByte((int)(Math.Clamp(fillOpacityPercent, 0, 100) / 100f * 255)) };
-        drawList.AddConvexPolyFilled(ref screenPointsBuffer[0], screenPointsBuffer.Length, ImGuiEx.ToU32(fillColor));
-        drawList.AddPolyline(ref screenPointsBuffer[0], screenPointsBuffer.Length, ImGuiEx.ToU32(color), ImDrawFlags.Closed, outlineThickness);
+        drawList.AddConvexPolyFilled(in screenPointsBuffer[0], screenPointsBuffer.Length, ImGuiEx.ToU32(fillColor));
+        drawList.AddPolyline(in screenPointsBuffer[0], screenPointsBuffer.Length, ImGuiEx.ToU32(color), outlineThickness, ImDrawFlags.Closed);
     }
 
     // Draws a centerd label with optional secondary text and a padded background.

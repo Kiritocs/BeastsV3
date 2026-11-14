@@ -1,7 +1,7 @@
 using System;
 using BeastsV3.Shared;
 using ExileCore;
-using ImGuiNET;
+using Hexa.NET.ImGui;
 using SharpDX;
 using Vector2 = System.Numerics.Vector2;
 using Color = SharpDX.Color;
@@ -36,7 +36,7 @@ public static class OverlayWindow
         var rect = game.Window.GetWindowRectangle();
         var anchor = new Vector2(rect.Width * (xPercent / 100f), rect.Height * (yPercent / 100f));
 
-        // Wrap width is measured before the font scale is applied, since SetWindowFontScale
+        // Wrap width is measured before the font scale is applied, since the font scale
         // multiplies whatever ImGui lays out. Without this a long error is one line wider than
         // the screen, so both ends of it are off-screen.
         var wrapWidth = 0f;
@@ -76,11 +76,11 @@ public static class OverlayWindow
             ImGuiWindowFlags.NoMove;
 
         ImGui.Begin(windowId, flags);
-        ImGui.SetWindowFontScale(style.TextScale);
+        ImGuiEx.PushFontScale(style.TextScale);
         if (wrapWidth > 0f) ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + wrapWidth);
         ImGui.TextColored(ImGuiEx.ToVec4(style.Text), text);
         if (wrapWidth > 0f) ImGui.PopTextWrapPos();
-        ImGui.SetWindowFontScale(1f);
+        ImGui.PopFont();
         ImGui.End();
 
         ImGui.PopStyleVar(3);

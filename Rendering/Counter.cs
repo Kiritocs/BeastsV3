@@ -72,7 +72,7 @@ public sealed class Counter
         }
 
         // Same completion rule the recorder uses.
-        if (MapCompletion.IsComplete(missionComplete, _questTotal, _tracker.RareBeastsFound, allTrackedCaptured))
+        if (MapCompletion.IsComplete(missionComplete, _questTotal, _tracker.RedBeastsFound, allTrackedCaptured))
             _currentMapCompleted = true;
 
         if (counter.Show.Value)
@@ -96,7 +96,7 @@ public sealed class Counter
 
     private void BuildCounterText(out string text, out bool allFound)
     {
-        var found = _tracker.RareBeastsFound;
+        var found = _tracker.RedBeastsFound;
         if (_questTotal > 0)
         {
             text = $"{CounterLabel}: {found}/{_questTotal}";

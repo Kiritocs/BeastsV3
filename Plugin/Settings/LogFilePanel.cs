@@ -1,7 +1,7 @@
 using System;
 using System.IO;
 using BeastsV3.Shared;
-using ImGuiNET;
+using Hexa.NET.ImGui;
 
 namespace BeastsV3.Plugin.Settings;
 

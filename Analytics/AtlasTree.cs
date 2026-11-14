@@ -11,51 +11,40 @@ namespace BeastsV3.Analytics;
 // game session, and analytics must never take the plugin down.
 public static class AtlasTree
 {
-    // Node ids are hardcoded on purpose - they do not change between leagues.
-    // tools/check-atlas-nodes.py validates them against GGG's tree export each league.
+    // Node ids from GGG's 3.30.0 atlas tree export (the 3.30 rework replaced every older id).
+    // tools/check-atlas-nodes.py validates them against the export each league.
 
-    // Natural Selection notable.
-    private const ushort NaturalSelection = 23092;
+    // Endangered Species notable: beasts are more likely to be less common varieties.
+    private const ushort EndangeredSpecies = 11040;
 
-    // Natural Selection wheel: 6 x "5% chance to contain an additional Red Beast" = 30%.
-    private static readonly ushort[] NaturalSelectionWheel =
-        [2624, 11142, 46840, 55725, 60761, 62888];
+    // Its path: 3 x "8% chance to contain an additional Red Beast" = 24%.
+    private static readonly ushort[] EndangeredSpeciesPath = [10514, 14008, 61936];
 
-    // Big Game notable: yellow beasts have 15% chance to be replaced with red beasts.
-    private const ushort BigGame = 13129;
+    // Herd Mentality notable: yellow beasts have 25% chance to be replaced with red beasts.
+    private const ushort HerdMentality = 49338;
 
-    // Big Game smalls: 2 x "1 additional Yellow Beast" = +2.
-    private static readonly ushort[] BigGameWheel = [16493, 25272];
+    // Its path: 3 x "1 additional Yellow Beast" = +3.
+    private static readonly ushort[] HerdMentalityPath = [2231, 4439, 29464];
 
-    // Mighty Hunter notable. No spawn effect, but part of the reference tree.
-    private const ushort MightyHunter = 1176;
+    // Hunting Grounds: "Red Beasts have 100% increased chance to be from <chosen family>".
+    // It biases which beast appears, so it disqualifies a map from the baseline cohort. The
+    // family is a choice on the node and cannot be told from the node id. The export lists the
+    // choices as variant effects, not nodes: 16876 The Deep, 36075 The Wilds, 31688 The Caverns,
+    // 31858 The Sands.
+    public const ushort HuntingGrounds = 7018;
 
-    // The Hunt for X: "Red Beasts have 100% increased chance to be from <classification>".
-    // These bias which beast appears, so they disqualify a map from the baseline cohort.
-    public const ushort HuntForCraiceann = 11194; // The Deep
-    public const ushort HuntForFarrul = 52011;    // The Wilds
-    public const ushort HuntForFenumus = 31941;   // The Caverns
-    public const ushort HuntForSaqawal = 46353;   // The Sands
-
-    private static readonly ushort[] ClassificationNodes =
-        [HuntForCraiceann, HuntForFarrul, HuntForFenumus, HuntForSaqawal];
+    private static readonly ushort[] ClassificationNodes = [HuntingGrounds];
 
     // Cohort A: rates are measured under this tree, not an unmodified one.
     private static readonly ushort[] ReferenceRequired =
-        [NaturalSelection, .. NaturalSelectionWheel, BigGame, .. BigGameWheel, MightyHunter];
+        [EndangeredSpecies, .. EndangeredSpeciesPath, HerdMentality, .. HerdMentalityPath];
 
     public static IReadOnlyList<ushort> ReferenceTreeRequiredNodes => ReferenceRequired;
     public static IReadOnlyList<ushort> ClassificationNodeIds => ClassificationNodes;
 
-    // Maps a classification node to the beast family it boosts.
-    public static string ClassificationFamily(ushort nodeId) => nodeId switch
-    {
-        HuntForCraiceann => "The Deep",
-        HuntForFarrul => "The Wilds",
-        HuntForFenumus => "The Caverns",
-        HuntForSaqawal => "The Sands",
-        _ => null,
-    };
+    // Display name of a classification node.
+    public static string ClassificationFamily(ushort nodeId) =>
+        nodeId == HuntingGrounds ? "Hunting Grounds" : null;
 
     // Reads the allocated atlas passives. Empty array when unavailable, so a failed read degrades.
     public static ushort[] ReadAllocatedNodes(GameController game)
@@ -90,8 +79,8 @@ public static class AtlasTree
     // Assigns the data-collection cohort from the allocated set, so there is nothing to spoof.
     //
     //   A - reference tree, no classification nodes  -> per-beast rates
-    //   B - reference tree + exactly one Hunt node   -> that family's multiplier
-    //   C - reference tree + two or more Hunt nodes  -> how the boosts stack
+    //   B - reference tree + one classification node    -> that family's multiplier
+    //   C - reference tree + two or more of them        -> how the boosts stack
     //   D - anything else                            -> counts, tier curves, EV only
     public static string ClassifyCohort(IReadOnlyCollection<ushort> nodes)
     {

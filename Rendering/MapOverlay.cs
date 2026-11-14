@@ -5,7 +5,7 @@ using BeastsV3.Route;
 using BeastsV3.Shared;
 using ExileCore;
 using ExileCore.PoEMemory.Components;
-using ImGuiNET;
+using Hexa.NET.ImGui;
 using SharpDX;
 using SharpVec2 = SharpDX.Vector2;
 using Vector2 = System.Numerics.Vector2;

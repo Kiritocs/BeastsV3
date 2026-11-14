@@ -41,7 +41,7 @@ Before you bind anything:
 | **Prices** | poe.ninja fetch with auto-refresh, plus price overlays in inventory, stash, merchant and Bestiary panels. |
 | **Counter** | Beast count and map completion, on screen. |
 | **Analytics** | Per-map and per-session records - cost, yield, atlas tree - autosaved, with a local dashboard. |
-| **Automation** | Regex and yellow itemize, delete, auto-stash, Faustus listing, map device load, restock, and a one-key full sequence. |
+| **Automation** | Regex itemize, delete, auto-stash, Faustus listing, map device load, restock, and a one-key full sequence. |
 | **Route** | *Experimental.* A route covering every beast spawn. Off by default. |
 
 ## Privacy

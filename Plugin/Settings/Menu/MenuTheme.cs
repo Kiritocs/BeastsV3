@@ -1,5 +1,5 @@
 using System.Numerics;
-using ImGuiNET;
+using Hexa.NET.ImGui;
 
 namespace BeastsV3.Plugin.Settings.Menu;
 
@@ -33,7 +33,7 @@ public static class MenuTheme
 
     public static uint U32(Vector4 color) => ImGui.ColorConvertFloat4ToU32(color);
 
-    // Cast from the raw value so it compiles against any ImGui.NET version the host uses.
+    // Cast from the raw value so it compiles against any ImGui wrapper version the host uses.
     public const ImGuiChildFlags BorderedChild = (ImGuiChildFlags)1;
     public const ImGuiChildFlags PlainChild = default;
 

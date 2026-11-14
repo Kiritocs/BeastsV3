@@ -10,10 +10,6 @@ public sealed class MapCostItem
     public string ItemName { get; set; } = string.Empty;
     public double UnitPriceChaos { get; set; }
 
-    // True when this line was reconstructed from the map's own stats rather than read off the
-    // map device, which is only readable while its window is visible and can miss a loadout
-    // entirely (recording the map as free). Keeps a reconstruction distinguishable.
-    public bool Inferred { get; set; }
 }
 
 // Per-beast totals for one map.
@@ -22,7 +18,7 @@ public sealed class MapBeastStat
     public string BeastName { get; set; } = string.Empty;
     public int Count { get; set; }
 
-    // Number kept, already doubled when a Bestiary Scarab of Duplicating was used.
+    // Number kept, already doubled when the map duplicates every capture.
     public int CapturedCount { get; set; }
 
     // Whether CapturedCount includes duplication.
@@ -95,20 +91,20 @@ public sealed class MapAnalyticsRecord
     public double NetChaos { get; set; }
     public bool UsedBestiaryScarabOfDuplicating { get; set; }
 
-    // Base names of the map device items, so a submission records which scarabs were used.
+    // Base names of the map device items (Threads; Scarabs before 3.30). The Scarab names here
+    // and below are kept because saved sessions and the telemetry collector use them.
     public string[] ScarabNames { get; set; } = [];
 
     public double? DeviceReadAgeMs { get; set; }
 
-    // Read from the map's own stat table, and authoritative over ScarabNames where they
-    // disagree - ScarabNames comes from polling the device window and can be stale or empty.
+    // Read from the map's own stat table, so it holds even when the device was never read.
     // Null means the stat was unreadable, which is not zero; see MapModifierStats.
     // Additive, so SchemaVersion stays at 2: older readers ignore unknown fields.
 
-    // Total additional red beasts from Herd scarabs, 5 per scarab (so 10 means two).
+    // Total additional red beasts the map's modifiers added.
     public int? MapAdditionalRedBeasts { get; set; }
 
-    // Chance for a captured beast to be duplicated, percent. 100 is the Duplicating scarab.
+    // Chance for a captured beast to be duplicated, percent.
     public int? MapDuplicateCapturedBeastsChancePct { get; set; }
     public double? FirstRedSeenSeconds { get; set; }
     public AtlasSnapshot Atlas { get; set; } = new();

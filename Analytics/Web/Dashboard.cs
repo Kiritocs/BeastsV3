@@ -114,7 +114,7 @@ th{position:sticky;top:0;background:var(--panel2);font-size:11px;color:var(--mut
 <div class="metric"><div class="k">Captured</div><div class="v" id="mCap">0c</div></div>
 <div class="metric"><div class="k">Cost</div><div class="v" id="mCost">0c</div></div>
 <div class="metric"><div class="k">Net</div><div class="v" id="mNet">0c</div></div>
-<div class="metric"><div class="k">Dup Scarab</div><div class="v" id="mDup">No</div></div>
+<div class="metric"><div class="k">Duplication</div><div class="v" id="mDup">No</div></div>
 </div>
 <div class="small" id="mBreak" style="margin-top:8px">Cost breakdown: n/a</div>
 </article>
@@ -151,8 +151,8 @@ th{position:sticky;top:0;background:var(--panel2);font-size:11px;color:var(--mut
 <input id="fMax" type="number" style="width:110px" placeholder="Max net"/>
 <button id="refMap">Refresh</button>
 </div>
-<div class="small" style="margin-bottom:8px">Click a map row to expand its beast breakdown. Dup Scarab usage and per-beast duped status appear in the expanded detail.</div>
-<div class="table"><table><thead><tr><th>Area</th><th>Time</th><th>Reds</th><th>First Red</th><th>Captured</th><th>Cost</th><th>Net</th><th>Dup Scarab</th><th>Completed</th></tr></thead><tbody id="mapBody"></tbody></table></div>
+<div class="small" style="margin-bottom:8px">Click a map row to expand its beast breakdown. Duplication usage and per-beast duped status appear in the expanded detail.</div>
+<div class="table"><table><thead><tr><th>Area</th><th>Time</th><th>Reds</th><th>First Red</th><th>Captured</th><th>Cost</th><th>Net</th><th>Duplication</th><th>Completed</th></tr></thead><tbody id="mapBody"></tbody></table></div>
 </article>
 
 <article class="card">
@@ -208,7 +208,7 @@ th{position:sticky;top:0;background:var(--panel2);font-size:11px;color:var(--mut
 <div class="grid g2" style="margin-bottom:8px">
 <input id="saveName" style="grid-column:span 2" placeholder="Session name"/>
 <input id="saveStrategy" placeholder="Strategy"/>
-<input id="saveScarab" placeholder="Scarab"/>
+<input id="saveScarab" placeholder="Threads"/>
 <input id="saveAtlas" placeholder="Atlas"/>
 <input id="savePool" placeholder="Map pool"/>
 <button id="saveBtn" class="primary">Save Session</button>
@@ -334,7 +334,7 @@ function detailBeastTable(map){
     if(!bs.length)return '<span class="small">No tracked beasts recorded.</span>';
     // Falls back to the map-level flag for records written without isDuplicated.
     const dupActive=Boolean(map?.usedBestiaryScarabOfDuplicating);
-    const dupNote=dupActive?'<div class="small" style="margin-bottom:6px">Dup Scarab active: Captured already counts both copies, so Seen 1 / Captured 2 is expected.</div>':'';
+    const dupNote=dupActive?'<div class="small" style="margin-bottom:6px">Duplication active: Captured already counts both copies, so Seen 1 / Captured 2 is expected.</div>':'';
     return `${dupNote}<table><thead><tr><th>Beast</th><th>Seen</th><th>Captured</th><th>Duped</th><th>Unit</th><th>Value</th></tr></thead><tbody>${bs.map(b=>{
         const captured=Number(b.capturedCount||0);
         const duped=(b.isDuplicated!==undefined?Boolean(b.isDuplicated):(dupActive&&captured>0));

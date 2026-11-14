@@ -328,7 +328,7 @@ public sealed class WebHost
         var (beastTotals, familyTotals) = _recorder.BuildSessionTotals(includeCurrentMap: true);
         var currentCostBreakdown = _cost.SnapshotCurrent();
         // Same predicate the recorder counts captures with.
-        var currentUsesDupScarab = state.IsCurrentAreaTrackable && _cost.CurrentMapUsesDuplicatingScarab;
+        var currentUsesDupScarab = state.IsCurrentAreaTrackable && _cost.CurrentMapDuplicatesCaptures;
 
         return new SessionCurrentResponse
         {

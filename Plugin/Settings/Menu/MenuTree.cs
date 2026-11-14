@@ -79,6 +79,8 @@ public static class MenuTree
             // The master toggle is drawn in the menu header instead.
             if (property.Name == nameof(BeastsSettings.Enable)) continue;
 
+            if (property.Name == nameof(BeastsSettings.Analytics) && !AnalyticsSettings.Unlocked) continue;
+
             var value = TryGetValue(property, settings);
             if (value == null) continue;
 

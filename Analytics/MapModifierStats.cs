@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using ExileCore;
 using ExileCore.Shared.Enums;
 
@@ -7,10 +8,6 @@ namespace BeastsV3.Analytics;
 // What the game actually applied to the current map, read from its stat table.
 public static class MapModifierStats
 {
-    // Bestiary Scarab of the Herd: "5 additional Red Beasts". The stat totals every scarab
-    // loaded, so 10 means two. Must match HERD_REDS_PER_SCARAB in the calculator and worker.
-    public const int RedBeastsPerHerdScarab = 5;
-
     private static readonly GameStat? AdditionalRedBeastsStat =
         Enum.TryParse<GameStat>("MapAdditionalRedBeasts", out var s) ? s : null;
 
@@ -18,13 +15,19 @@ public static class MapModifierStats
         Enum.TryParse<GameStat>("MapDuplicateCapturedBeastsChancePct", out var s) ? s : null;
 
     // One reading of the map's modifier stats.
-    public readonly record struct Reading(int AdditionalRedBeasts, int DuplicateCapturedChancePct)
-    {
-        // Herd scarab count implied by the additional red beasts, at 5 each. Integer division on
-        // purpose: a value that is not a clean multiple of 5 means something else feeds this stat.
-        public int HerdScarabCount => AdditionalRedBeasts / RedBeastsPerHerdScarab;
+    public readonly record struct Reading(int AdditionalRedBeasts, int DuplicateCapturedChancePct);
 
-        public bool UsedDuplicatingScarab => DuplicateCapturedChancePct > 0;
+    // Every beast or thread stat on the map with its value, for the log. After a league patch
+    // this is what shows which stats the new mechanics really set.
+    public static string DescribeRelevant(GameController game)
+    {
+        var stats = game?.IngameState?.Data?.MapStats;
+        if (stats == null) return string.Empty;
+
+        return string.Join(", ", stats
+            .Where(s => s.Key.ToString() is var name &&
+                        (name.Contains("Beast") || name.Contains("Bestiary") || name.Contains("Thread")))
+            .Select(s => $"{s.Key}={s.Value}"));
     }
 
     // Reads both stats at once, or null while the table is unavailable.

@@ -7,7 +7,7 @@ using BeastsV3.Automation;
 using BeastsV3.Shared;
 using System.Windows.Forms;
 using ExileCore.Shared.Nodes;
-using ImGuiNET;
+using Hexa.NET.ImGui;
 
 namespace BeastsV3.Plugin.Settings.Menu;
 
@@ -96,9 +96,9 @@ public sealed class SettingsMenu
     // Draws the title bar, master toggle and search box.
     private void DrawHeader()
     {
-        ImGui.SetWindowFontScale(1.25f);
+        ImGuiEx.PushFontScale(1.25f);
         ImGui.TextColored(MenuTheme.Gold, "Beasts V3");
-        ImGui.SetWindowFontScale(1f);
+        ImGui.PopFont();
 
         ImGui.SameLine();
         var toggleWidth = ImGui.GetFrameHeight() * 1.45f;
@@ -744,6 +744,8 @@ public sealed class SettingsMenu
                 automation == null ? "Plugin is not loaded." : "No workflow is running.");
         }
 
+        if (!AnalyticsSettings.Unlocked) return;
+
         ImGui.SameLine();
         if (_settings.Analytics.Enable.Value)
         {
@@ -777,6 +779,14 @@ public sealed class SettingsMenu
         QuickAction("Refresh prices##bv3home", size, _settings.BeastPrices.FetchPrices,
             "Fetch the latest beast and market prices from poe.ninja now.");
         ImGui.SameLine();
+
+        if (!AnalyticsSettings.Unlocked)
+        {
+            QuickAction("Open log folder##bv3home", size, _settings.LogFile.OpenFolder,
+                "Open config/BeastsV3Logs in Explorer.");
+            return;
+        }
+
         QuickAction("Open dashboard##bv3home", size, _settings.Analytics.Web.OpenInBrowser,
             "Open the analytics web dashboard in your browser.");
         ImGui.SameLine();

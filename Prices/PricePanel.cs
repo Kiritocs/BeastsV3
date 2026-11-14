@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Numerics;
 using BeastsV3.Beasts;
 using BeastsV3.Plugin.Settings;
-using ImGuiNET;
+using Hexa.NET.ImGui;
 
 namespace BeastsV3.Prices;
 

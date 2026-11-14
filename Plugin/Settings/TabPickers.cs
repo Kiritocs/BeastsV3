@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using BeastsV3.Automation.Ui;
 using ExileCore.Shared.Nodes;
-using ImGuiNET;
+using Hexa.NET.ImGui;
 
 namespace BeastsV3.Plugin.Settings;
 

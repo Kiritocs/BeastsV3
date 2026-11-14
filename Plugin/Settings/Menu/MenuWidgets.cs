@@ -5,7 +5,7 @@ using System.Reflection;
 using System.Windows.Forms;
 using BeastsV3.Shared;
 using ExileCore.Shared.Nodes;
-using ImGuiNET;
+using Hexa.NET.ImGui;
 using Vector2 = System.Numerics.Vector2;
 using Vector4 = System.Numerics.Vector4;
 
@@ -106,9 +106,9 @@ public static class MenuWidgets
         ImGui.TextColored(MenuTheme.Muted, label);
 
         ImGui.SetCursorPos(new Vector2(10f, 24f));
-        ImGui.SetWindowFontScale(1.3f);
+        ImGuiEx.PushFontScale(1.3f);
         ImGui.TextColored(valueColor, value);
-        ImGui.SetWindowFontScale(1f);
+        ImGui.PopFont();
 
         ImGui.EndChild();
         ImGui.PopStyleColor();

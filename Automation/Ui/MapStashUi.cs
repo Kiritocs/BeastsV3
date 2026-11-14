@@ -11,7 +11,7 @@ using ExileCore;
 using ExileCore.PoEMemory;
 using ExileCore.PoEMemory.Components;
 using ExileCore.Shared.Enums;
-using ImGuiNET;
+using Hexa.NET.ImGui;
 using SharpVec2 = SharpDX.Vector2;
 
 namespace BeastsV3.Automation.Ui;

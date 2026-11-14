@@ -6,7 +6,7 @@ using BeastsV3.Automation.Input;
 using BeastsV3.Plugin.Settings;
 using BeastsV3.Shared;
 using ExileCore;
-using ImGuiNET;
+using Hexa.NET.ImGui;
 
 namespace BeastsV3.Automation.Workflows;
 

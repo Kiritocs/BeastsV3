@@ -17,12 +17,14 @@ namespace BeastsV3.Automation.Ui;
 public sealed class AtlasUi
 {
     public const string OpenMapSelectionValue = "open Map";
-    public const float TargetScale = 0.45f;
-    public const float TargetScaleTolerance = 0.015f;
     public const float CenteredMinY = -1200f;
     public const float CenteredMaxY = -1100f;
 
     private const int MaxScrollAttempts = 18;
+
+    // A scroll that changes the scale by less than this within the timeout did nothing.
+    private const float ScaleChangeEpsilon = 0.005f;
+    private const int ScaleSettleTimeoutMs = 250;
     private const int MaxCenterAttempts = 14;
     private const int AtlasNodeUiOffset = 2;
     private const int AtlasNodeScanLimit = 110;
@@ -69,27 +71,25 @@ public sealed class AtlasUi
     public float? CurrentScale() => ReadInnerAtlasScale(InnerAtlas);
     public float? CurrentY() => ReadInnerAtlasY(InnerAtlas);
 
-    public bool IsScaleAtTarget()
-    {
-        var s = CurrentScale();
-        return s.HasValue && Math.Abs(s.Value - TargetScale) <= TargetScaleTolerance;
-    }
-
     public bool IsYCentered()
     {
         var y = CurrentY();
         return y.HasValue && IsInRange(NormalizeYForCentering(y.Value));
     }
 
+    // Zooms the Atlas all the way out. "All the way" is found by scrolling until the scale
+    // stops shrinking, not by a fixed number: the game's minimum zoom changed in 3.30
+    // (0.45 to 0.5), and waiting for the old value cost eighteen useless scrolls per load.
     public async Task NormalizeScaleAsync()
     {
         var inner = InnerAtlas;
         if (inner == null) return;
 
-        if (IsScaleAtTarget()) return;
-
         for (var attempt = 1; attempt <= MaxScrollAttempts; attempt++)
         {
+            var before = CurrentScale();
+            if (!before.HasValue) return;
+
             var anchor = await FindTooltipFreeProbeAsync(inner, passIndex: 0);
             if (!anchor.HasValue) return;
 
@@ -97,16 +97,20 @@ public sealed class AtlasUi
             await _input.DelayAsync(Math.Max(35, _settings.Timing.Polling.FastPollDelayMs.Value));
 
             ScrollWheelDown();
-            await _input.DelayForUiCheckAsync(Math.Max(90, _settings.Timing.Polling.FastPollDelayMs.Value + 20));
 
-            if (IsScaleAtTarget())
+            var shrank = await _waits.WaitForAsync(
+                () => CurrentScale() < before.Value - ScaleChangeEpsilon,
+                timeoutMs: ScaleSettleTimeoutMs,
+                pollDelayMs: _settings.Timing.Polling.FastPollDelayMs.Value);
+
+            if (!shrank)
             {
-                Log.Debug($"Atlas scale normalized after {attempt} scroll(s).");
+                Log.Debug($"Atlas fully zoomed out after {attempt} scroll(s). scale={CurrentScale():0.###}");
                 return;
             }
         }
 
-        Log.Debug($"Atlas scale did not reach target after {MaxScrollAttempts} attempts. current={CurrentScale():0.###}");
+        Log.Debug($"Atlas still zooming out after {MaxScrollAttempts} scrolls. scale={CurrentScale():0.###}");
     }
 
     public async Task CenterYAsync()

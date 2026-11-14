@@ -23,11 +23,11 @@ public sealed class PriceService
     private const string ExchangeOverviewEndpoint = "economy/exchange/current/overview";
 
     private static readonly HttpClient Http = new();
-    private static readonly string[] MarketTypes = ["Scarab", "Map", "Fragment", "Currency", "Invitation"];
+    private static readonly string[] MarketTypes = ["Thread", "Map", "Fragment", "Currency", "Invitation"];
     private static readonly Dictionary<string, string> EndpointByType = new(StringComparer.OrdinalIgnoreCase)
     {
         ["Beast"] = ItemOverviewEndpoint,
-        ["Scarab"] = ExchangeOverviewEndpoint,
+        ["Thread"] = ExchangeOverviewEndpoint,
         ["Map"] = ItemOverviewEndpoint,
         ["Fragment"] = ExchangeOverviewEndpoint,
         ["Currency"] = ExchangeOverviewEndpoint,

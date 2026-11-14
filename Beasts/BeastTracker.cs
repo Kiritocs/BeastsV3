@@ -67,6 +67,9 @@ public sealed class BeastTracker
 
     public int RareBeastsFound => _countedRareIds.Count;
 
+    // Counted beasts that are in the catalog - the red ones Einhar's quest asks for.
+    public int RedBeastsFound { get; private set; }
+
     public IReadOnlyDictionary<long, Entity> LiveTracked => _liveTracked;
 
     // Returns the name and capture state Reconcile resolved for a live beast this frame.
@@ -110,6 +113,7 @@ public sealed class BeastTracker
         }
 
         _countedRareIds.Clear();
+        RedBeastsFound = 0;
         _capturedIds.Clear();
         _markers.Clear();
         _markerSnapshot.Clear();
@@ -236,6 +240,7 @@ public sealed class BeastTracker
     private bool RegisterRareBeast(long entityId, string beastName, DateTime nowUtc)
     {
         if (!_countedRareIds.Add(entityId)) return false;
+        if (!string.IsNullOrWhiteSpace(beastName)) RedBeastsFound++;
 
         RareBeastSeen?.Invoke(entityId, beastName, nowUtc);
         return true;

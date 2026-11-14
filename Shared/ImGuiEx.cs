@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using ExileCore.PoEMemory;
-using ImGuiNET;
+using Hexa.NET.ImGui;
 using SharpDX;
 using Vector2 = System.Numerics.Vector2;
 using Vector4 = System.Numerics.Vector4;
@@ -17,6 +17,10 @@ public static class ImGuiEx
         new(color.R / 255f, color.G / 255f, color.B / 255f, color.A / 255f);
 
     public static uint ToU32(Color color) => ImGui.ColorConvertFloat4ToU32(ToVec4(color));
+
+    // Scales the current font until PopFont. Replaces SetWindowFontScale, which ImGui 1.92 removed.
+    public static void PushFontScale(float scale) =>
+        ImGui.PushFont(default(ImFontPtr), ImGui.GetStyle().FontSizeBase * scale);
 
     public static string PluralSuffix(int count) => count == 1 ? string.Empty : "s";
 

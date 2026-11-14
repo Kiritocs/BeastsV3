@@ -8,7 +8,7 @@ using BeastsV3.Shared;
 using ExileCore;
 using ExileCore.PoEMemory.Components;
 using GameOffsets.Native;
-using ImGuiNET;
+using Hexa.NET.ImGui;
 using SharpDX;
 using Color = SharpDX.Color;
 using Vector2 = System.Numerics.Vector2;
@@ -138,7 +138,7 @@ public sealed class ExplorationRoute
             CommitExcludedPaths(paths);
         }
 
-        ImGui.BeginChild("##BeastsV3ExPathScroll", new Vector2(0, 200), ImGuiChildFlags.Border);
+        ImGui.BeginChild("##BeastsV3ExPathScroll", new Vector2(0, 200), ImGuiChildFlags.Borders);
         for (var i = 0; i < paths.Count; i++)
         {
             ImGui.PushID(i);

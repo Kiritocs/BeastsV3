@@ -1,6 +1,6 @@
 using System;
 using System.Linq;
-using ImGuiNET;
+using Hexa.NET.ImGui;
 
 namespace BeastsV3.Plugin;
 
@@ -10,6 +10,8 @@ public static class Changelog
 {
     private static readonly ChangelogEntry[] Entries =
     [
+        new(2026, 11, 14, 1,
+            "Initial fixes for 3.30. Some things are probably still not working."),
         new(2026, 8, 23, 1,
             "Map Device load: a quantity of two stacks now keeps two slots filled.",
             "Map Device load: slots beyond what your quantity asks for go back to your inventory.",

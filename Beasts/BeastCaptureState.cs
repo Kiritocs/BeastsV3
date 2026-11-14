@@ -25,7 +25,8 @@ public static class BeastCaptureStates
     // True when the entity is a rare monster that can be captured.
     public static bool IsRareCapturable(Entity entity)
     {
-        if (entity == null || entity.Rarity != MonsterRarity.Rare) return false;
+        // Unique counts too: a 3.30 Thread effect can turn a red beast into a boss.
+        if (entity == null || entity.Rarity is not (MonsterRarity.Rare or MonsterRarity.Unique)) return false;
 
         // Metadata is the one signal a stat lookup can't provide, so it is checked first.
         if (MatchesCatalogMetadata(entity.Metadata)) return true;

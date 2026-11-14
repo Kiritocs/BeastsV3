@@ -359,8 +359,8 @@ public sealed class SessionRecorder
         var offsetSeconds = State.CurrentMapReplayOffsetSeconds(nowUtc);
         encounter.CapturedSeconds = offsetSeconds;
 
-        // A Bestiary Scarab of Duplicating yields two beasts per capture.
-        var captureMultiplier = _cost.CurrentMapUsesDuplicatingScarab ? 2 : 1;
+        // A map that always duplicates yields two beasts per capture.
+        var captureMultiplier = _cost.CurrentMapDuplicatesCaptures ? 2 : 1;
         State.CurrentMapValuableBeastCapturedCounts[beastName] =
             State.CurrentMapValuableBeastCapturedCounts.TryGetValue(beastName, out var prev)
                 ? prev + captureMultiplier
@@ -428,7 +428,7 @@ public sealed class SessionRecorder
         }
 
         // Same rule the counter overlay uses.
-        if (MapCompletion.IsComplete(_questMissionComplete, _questTotal, _tracker.RareBeastsFound,
+        if (MapCompletion.IsComplete(_questMissionComplete, _questTotal, _tracker.RedBeastsFound,
                 _tracker.AllTrackedValuableBeastsCaptured()))
         {
             State.CurrentMapWasComplete = true;
@@ -484,7 +484,7 @@ public sealed class SessionRecorder
         var costChaos = costBreakdown.Sum(x => x.UnitPriceChaos);
 
         // Resolved once and stamped onto every breakdown row.
-        var usedDupScarab = _cost.CurrentMapUsesDuplicatingScarab;
+        var usedDupScarab = _cost.CurrentMapDuplicatesCaptures;
 
         var breakdown = State.CurrentMapValuableBeastCounts
             .OrderByDescending(x => x.Value)
@@ -799,7 +799,7 @@ public sealed class SessionRecorder
         }).ToArray() ?? [],
         CostBreakdown = source.CostBreakdown?.Select(c => new MapCostItem
         {
-            ItemName = c.ItemName, UnitPriceChaos = c.UnitPriceChaos, Inferred = c.Inferred,
+            ItemName = c.ItemName, UnitPriceChaos = c.UnitPriceChaos,
         }).ToArray() ?? [],
         ReplayEvents = source.ReplayEvents?.Select(e => new MapReplayEvent
         {

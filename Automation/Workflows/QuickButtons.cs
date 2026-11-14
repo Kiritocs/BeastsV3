@@ -6,7 +6,7 @@ using BeastsV3.Shared;
 using ExileCore;
 using ExileCore.PoEMemory.Elements.InventoryElements;
 using ExileCore.Shared.Enums;
-using ImGuiNET;
+using Hexa.NET.ImGui;
 
 namespace BeastsV3.Automation.Workflows;
 

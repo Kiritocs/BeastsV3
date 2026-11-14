@@ -112,7 +112,7 @@ public sealed class MapDeviceUi
     public List<SlotItem> GetSlotItems()
     {
         var result = new List<SlotItem>();
-        if (!TryGetScarabSlots(out var slots)) return result;
+        if (!TryGetSlots(out var slots)) return result;
 
         // The map slot is identified by address rather than by index.
         var mapSlotAddress = MapSlotAddress;
@@ -161,17 +161,76 @@ public sealed class MapDeviceUi
             .Sum(s => s.StackSize);
     }
 
+    // ---- threads ---------------------------------------------------------
+
+    // Levels walked below the device window; a thread's count text sits seven down.
+    private const int MaxThreadDepth = 8;
+
+    // The Threads the device will spend on the next map: each selected thread and its count.
+    // Since 3.30 a thread is not an item in a slot. Its slot shows the thread as a tooltip and
+    // the count as a number, so both are found by walking the window, not by child index.
+    public static List<(string Name, int Count)> ReadThreads(Element window)
+    {
+        var threads = new List<(string Name, int Count)>();
+        CollectThreads(window, 0, threads);
+        return threads;
+    }
+
+    private static void CollectThreads(Element element, int depth, List<(string Name, int Count)> into)
+    {
+        if (element == null || !element.IsVisibleLocal || depth > MaxThreadDepth) return;
+
+        var name = FirstText(element.Tooltip, 2);
+        if (name != null && name.EndsWith("Thread", StringComparison.OrdinalIgnoreCase) &&
+            int.TryParse(FirstText(element, 3), out var count) && count > 0)
+        {
+            into.Add((name, count));
+            return;
+        }
+
+        foreach (var child in element.Children) CollectThreads(child, depth + 1, into);
+    }
+
+    // First non-empty text of an element or its descendants, nearest level first.
+    private static string FirstText(Element element, int maxDepth)
+    {
+        if (element == null || element.Address == 0) return null;
+
+        var level = new List<Element> { element };
+        for (var depth = 0; depth <= maxDepth && level.Count > 0; depth++)
+        {
+            foreach (var e in level)
+            {
+                if (!string.IsNullOrWhiteSpace(e?.Text)) return e.Text.Trim();
+            }
+            level = level.Where(e => e != null).SelectMany(e => e.Children).ToList();
+        }
+        return null;
+    }
+
     // ---- private -------------------------------------------------------
 
-    // Reads the window's slot collection via reflection.
-    private bool TryGetScarabSlots(out List<object> slots)
+    private static bool _loggedMissingSlots;
+
+    // Reads the window's slot collection via reflection. "ScarabSlots" is ExileCore's name for it.
+    private bool TryGetSlots(out List<object> slots)
     {
         slots = new List<object>();
         var w = Window;
         if (w == null || w.IsVisible != true) return false;
 
         var raw = w.GetType().GetProperty("ScarabSlots")?.GetValue(w) as IEnumerable;
-        if (raw == null) return false;
+        if (raw == null)
+        {
+            // Names the window's real properties once, so a rename in ExileCore is a one-line fix.
+            if (!_loggedMissingSlots)
+            {
+                _loggedMissingSlots = true;
+                Log.Info("Map Device has no 'ScarabSlots' property. Its properties: " +
+                         string.Join(", ", w.GetType().GetProperties().Select(p => p.Name)));
+            }
+            return false;
+        }
 
         foreach (var slot in raw) slots.Add(slot);
         return true;

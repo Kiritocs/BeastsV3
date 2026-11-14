@@ -18,7 +18,7 @@ using BeastsV3.Route;
 using BeastsV3.Shared;
 using ExileCore;
 using ExileCore.PoEMemory.MemoryObjects;
-using ImGuiNET;
+using Hexa.NET.ImGui;
 
 namespace BeastsV3.Plugin;
 
@@ -90,10 +90,16 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
         Name = "Beasts V3";
     }
 
-    public override bool Initialise() => true;
+    public override bool Initialise()
+    {
+        Settings.Restock.DisableThreadTargets();
+        return true;
+    }
 
     public override void OnLoad()
     {
+        if (!AnalyticsSettings.Unlocked) Settings.Analytics.TurnOff();
+
         StartLogging();
 
         // Deferred so they also work before _recorder exists and after an unload.
@@ -151,7 +157,7 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
         _recorder = new SessionRecorder(GameController, Settings, _tracker, _prices, _cost, _sessionStore);
         _areaTransitions = new AreaTransitions(_recorder.State);
         // A getter, not the current value: _telemetry is assigned below, Render() runs later.
-        _analyticsOverlay = new AnalyticsOverlay(GameController, Settings, _recorder, _cost, () => _telemetry);
+        _analyticsOverlay = new AnalyticsOverlay(GameController, Settings, _recorder, () => _telemetry);
 
         // Opt-in telemetry. Enqueue does nothing with sharing off, so subscribing is safe.
         _telemetry = new TelemetryUploader(Settings);
@@ -443,7 +449,7 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
                 ("Live tracked", $"{_tracker?.LiveTracked.Count}"),
                 ("Markers", $"{markers?.Count ?? 0} ({liveMarkers} live, {(markers?.Count ?? 0) - liveMarkers} cached)"),
                 ("All tracked captured", $"{_tracker?.AllTrackedValuableBeastsCaptured()}"),
-                ("Map cost", $"{_cost?.Current.Count ?? 0} line(s), dupScarab={_cost?.CurrentMapUsesDuplicatingScarab}"),
+                ("Map cost", $"{_cost?.Current.Count ?? 0} line(s), duplicating={_cost?.CurrentMapDuplicatesCaptures}"),
                 ("Prepared cost", $"{_cost?.Prepared.Count ?? 0} line(s)"),
                 ("Prices updated", Settings.BeastPrices.LastUpdated),
                 ("Tracked beasts", $"{Settings.BeastPrices.EnabledBeasts.Count} enabled"),
@@ -507,8 +513,6 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
             () => _bestiary.DeleteAllAsync());
         _runner.CheckHotkey(Settings.BestiaryAutomation.RegexItemizeHotkey, "Bestiary regex itemize",
             () => _bestiary.RegexItemizeAsync());
-        _runner.CheckHotkey(Settings.BestiaryAutomation.YellowItemizeHotkey, "Bestiary yellow itemize",
-            () => _bestiary.ItemizeYellowsAsync());
         _runner.CheckHotkey(Settings.MerchantAutomation.FaustusListHotkey, "Faustus list",
             () => _faustusList.RunAsync());
         _runner.CheckHotkey(Settings.Restock.RestockHotkey, "Restock",
@@ -778,7 +782,7 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
         {
             try
             {
-                ImGuiNET.ImGui.SetClipboardText(_webHost.Url);
+                ImGui.SetClipboardText(_webHost.Url);
                 Log.Info($"Dashboard URL copied: {_webHost.Url}");
             }
             catch (Exception ex) { Log.Error("Failed to copy dashboard URL", ex); }

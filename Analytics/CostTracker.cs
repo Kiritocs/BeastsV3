@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using BeastsV3.Automation.Ui;
 using BeastsV3.Plugin.Settings;
 using BeastsV3.Prices;
 using BeastsV3.Shared;
@@ -16,8 +17,6 @@ namespace BeastsV3.Analytics;
 // an "Extra (Manual)" line.
 public sealed class CostTracker
 {
-    private const string DuplicatingScarabName = "Bestiary Scarab of Duplicating";
-    private const string HerdScarabName = "Bestiary Scarab of the Herd";
     private const string ExtraManualLineName = "Extra (Manual)";
 
     private readonly GameController _game;
@@ -45,9 +44,6 @@ public sealed class CostTracker
         _prices = prices;
     }
 
-    public bool PreparedUsedDuplicatingScarab { get; private set; }
-    public bool CurrentUsedDuplicatingScarab { get; private set; }
-
     public IReadOnlyList<MapCostItem> Prepared => _prepared;
     public IReadOnlyList<MapCostItem> Current => _current;
 
@@ -58,16 +54,9 @@ public sealed class CostTracker
     public int? CurrentAdditionalRedBeasts { get; private set; }
     public int? CurrentDuplicateCapturedChancePct { get; private set; }
 
-    // Herd scarab count for the current map. Null when the stat could not be read.
-    public int? CurrentHerdScarabCount =>
-        CurrentAdditionalRedBeasts is { } n && n >= 0
-            ? n / MapModifierStats.RedBeastsPerHerdScarab
-            : null;
-
-    public bool CurrentMapUsesDuplicatingScarab =>
-        CurrentDuplicateCapturedChancePct is { } pct
-            ? pct > 0
-            : CurrentUsedDuplicatingScarab || _current.Any(x => IsDuplicatingScarabItemName(x?.ItemName));
+    // True when every capture in the current map is duplicated. A partial chance (3.30's
+    // Bonded for Life is 20%) is not counted: which captures it hit cannot be observed.
+    public bool CurrentMapDuplicatesCaptures => CurrentDuplicateCapturedChancePct >= 100;
 
     // Total chaos cost of the current breakdown.
     public double ComputeCurrentCostChaos() => _current.Sum(x => x.UnitPriceChaos);
@@ -111,8 +100,6 @@ public sealed class CostTracker
         CurrentAdditionalRedBeasts = reading.AdditionalRedBeasts;
         CurrentDuplicateCapturedChancePct = reading.DuplicateCapturedChancePct;
 
-        InferCostFromMapModifiers(reading);
-
         if (!_modifierLogged)
         {
             _modifierLogged = true;
@@ -120,62 +107,16 @@ public sealed class CostTracker
         }
     }
 
-    // Rebuilds the scarab cost lines from the map's stats when the device was never read,
-    // so a failed reading is not recorded as a free map. Only fills a genuinely empty
-    // breakdown - a device reading that produced anything is the more detailed record.
-    private void InferCostFromMapModifiers(MapModifierStats.Reading reading)
-    {
-        // The manual extra-cost line is added by the plugin, so it does not count as
-        // evidence that the device itself was read.
-        if (_current.Any(x => !string.Equals(x?.ItemName, ExtraManualLineName,
-                                             StringComparison.OrdinalIgnoreCase))) return;
-
-        var inferred = new List<MapCostItem>();
-        AddInferred(inferred, HerdScarabName, reading.HerdScarabCount);
-        if (reading.UsedDuplicatingScarab) AddInferred(inferred, DuplicatingScarabName, 1);
-
-        if (inferred.Count == 0) return;
-
-        _current.InsertRange(0, inferred);
-        CurrentUsedDuplicatingScarab = CurrentUsedDuplicatingScarab || reading.UsedDuplicatingScarab;
-
-        Log.Info($"Map cost inferred from map stats: {inferred.Count} line(s), " +
-                 $"{inferred.Sum(x => x.UnitPriceChaos):0.#}c total - the map device was " +
-                 "not read, so these are reconstructed rather than observed.");
-    }
-
-    private void AddInferred(List<MapCostItem> into, string itemName, int count)
-    {
-        if (count <= 0) return;
-
-        _prices.TryGetItemPriceChaos(itemName, out var price);
-        for (var i = 0; i < count; i++)
-        {
-            into.Add(new MapCostItem { ItemName = itemName, UnitPriceChaos = price, Inferred = true });
-        }
-    }
-
     // Logged separately from "Map cost armed", which is written at map start before these
-    // stats are readable. The device reading is printed alongside because the gap is the
-    // point: herd=2 from the map against 0 items from the device is a handled case.
+    // stats are readable.
     private void LogMapModifiers()
     {
-        var herd = CurrentHerdScarabCount is { } h ? h.ToString() : "unknown";
         var reds = CurrentAdditionalRedBeasts is { } r ? r.ToString() : "unknown";
         var dup = CurrentDuplicateCapturedChancePct is { } d ? $"{d}%" : "unknown";
 
-        var deviceHerd = _current.Count(x =>
-            x?.ItemName?.IndexOf("Herd", StringComparison.OrdinalIgnoreCase) >= 0);
-
-        // attempt=1 means the stats were ready on the first frame in the map, which is the
-        // question that decides whether the retry below is earning its keep. If every map
-        // reports 1, this could collapse to a single read in the area-change callback.
-        Log.Info($"Map modifiers (from map stats): herd={herd} ({reds} additional reds), " +
-                 $"duplicating={dup}, attempt={_modifierPolls} | map device had recorded " +
-                 $"herd={deviceHerd}, {_current.Count} item(s)" +
-                 (CurrentHerdScarabCount is { } mapHerd && mapHerd != deviceHerd
-                     ? " <- DISAGREE, map stats win"
-                     : string.Empty));
+        Log.Info($"Map modifiers (from map stats): {reds} additional reds, duplicating={dup}, " +
+                 $"attempt={_modifierPolls} | map device had recorded {_current.Count} item(s) | " +
+                 $"beast/thread stats: {MapModifierStats.DescribeRelevant(_game)}");
     }
 
     // Re-reads the map device, throttled to Analytics.MapDeviceCapturePollIntervalMs.
@@ -196,10 +137,7 @@ public sealed class CostTracker
     {
         _current.Clear();
         _current.AddRange(CloneList(_prepared));
-        CurrentUsedDuplicatingScarab = PreparedUsedDuplicatingScarab ||
-                                       _current.Any(x => IsDuplicatingScarabItemName(x?.ItemName));
         _prepared.Clear();
-        PreparedUsedDuplicatingScarab = false;
 
         // Cleared for the new map, then relatched by LatchMapModifiers once inside it.
         // Carrying the previous map's stats over would be worse than having none.
@@ -213,22 +151,17 @@ public sealed class CostTracker
             ? null
             : Math.Max(0, (DateTime.UtcNow - _lastReadUtc).TotalMilliseconds);
 
-        // What the DEVICE said, which is only the cost breakdown - not the last word on which
-        // scarabs were loaded. The map's own stats follow in "Map modifiers" and win where they
-        // disagree; kept separate because this runs before those stats exist.
         var age = CurrentDeviceReadAgeMs is { } ms ? $"{ms:0}ms" : "never read";
-        Log.Info($"Map cost armed: dupScarab={CurrentUsedDuplicatingScarab}, " +
-                 $"deviceReadAge={age}, {_current.Count} item(s)" +
+        Log.Info($"Map cost armed: deviceReadAge={age}, {_current.Count} item(s)" +
                  (_current.Count > 0
                      ? $": {string.Join(", ", _current.Select(x => $"{x.ItemName} {x.UnitPriceChaos:0.#}c"))}"
-                     : " - Map Device was not read; scarab counts will come from map stats."));
+                     : " - Map Device was not read."));
     }
 
     // Clears the current breakdown.
     public void ResetCurrent()
     {
         _current.Clear();
-        CurrentUsedDuplicatingScarab = false;
         CurrentAdditionalRedBeasts = null;
         CurrentDuplicateCapturedChancePct = null;
         _modifierPolls = 0;
@@ -237,13 +170,10 @@ public sealed class CostTracker
     }
 
     // Replaces the prepared breakdown and appends the manual extra-cost line.
-    public void SetPrepared(IEnumerable<MapCostItem> items, bool? usedDuplicatingScarabOverride = null)
+    public void SetPrepared(IEnumerable<MapCostItem> items)
     {
         _prepared.Clear();
         _prepared.AddRange(CloneList(items));
-
-        PreparedUsedDuplicatingScarab = usedDuplicatingScarabOverride ??
-                                        _prepared.Any(x => IsDuplicatingScarabItemName(x?.ItemName));
 
         var extra = _settings.Analytics.ExtraCostPerMapChaos.Value;
         if (extra > 0)
@@ -305,12 +235,14 @@ public sealed class CostTracker
                 }
             }
         }
+
+        // One line per thread spent, so the cost is count x price.
+        foreach (var (name, count) in MapDeviceUi.ReadThreads(window))
+        {
+            for (var i = 0; i < count; i++) names.Add(name);
+        }
         return true;
     }
-
-    public static bool IsDuplicatingScarabItemName(string name) =>
-        !string.IsNullOrWhiteSpace(name) &&
-        name.IndexOf(DuplicatingScarabName, StringComparison.OrdinalIgnoreCase) >= 0;
 
     // Copies cost lines, dropping entries with no name.
     private static List<MapCostItem> CloneList(IEnumerable<MapCostItem> items)
@@ -324,7 +256,6 @@ public sealed class CostTracker
             {
                 ItemName = item.ItemName,
                 UnitPriceChaos = item.UnitPriceChaos,
-                Inferred = item.Inferred,
             });
         }
         return result;

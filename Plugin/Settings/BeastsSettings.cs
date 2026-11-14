@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using ExileCore.Shared.Attributes;
 using ExileCore.Shared.Interfaces;
 using ExileCore.Shared.Nodes;
@@ -38,7 +39,7 @@ public class BeastsSettings : ISettings
     [Menu("Automation: Faustus", "List itemized captured beasts to Faustus.")]
     public MerchantAutomationSettings MerchantAutomation { get; set; } = new();
 
-    [Menu("Automation: Restock", "Pull configured maps/scarabs from stash into inventory to reach target quantities.")]
+    [Menu("Automation: Restock", "Pull configured maps from stash into inventory to reach target quantities.")]
     public RestockSettings Restock { get; set; } = new();
 
     [Menu("Automation: Full Sequence", "One-key: Bestiary regex-itemize -> travel to hideout -> Faustus list.")]
@@ -412,9 +413,6 @@ public class BestiaryAutomationSettings
     [Menu("Regex Itemize Hotkey", "Hotkey to filter with regex + ctrl-click every matching beast.")]
     public HotkeyNodeV2 RegexItemizeHotkey { get; set; } = new(System.Windows.Forms.Keys.None);
 
-    [Menu("Yellow Itemize Hotkey", "Hotkey to itemize every beast that is not in the plugin's beast catalog.")]
-    public HotkeyNodeV2 YellowItemizeHotkey { get; set; } = new(System.Windows.Forms.Keys.None);
-
     [Menu("Challenges Window Hotkey", "Must match your Path of Exile Challenges keybind so automation can open the Bestiary panel when the Menagerie isn't reachable.")]
     public HotkeyNodeV2 ChallengesWindowHotkey { get; set; } = new(System.Windows.Forms.Keys.None);
 
@@ -424,7 +422,7 @@ public class BestiaryAutomationSettings
     [Menu("Show Inventory Quick Button", "Show a 'Right Click All Beasts' button next to inventory while in Menagerie or with the Bestiary panel open. It releases beasts from inventory and, when a stash tab is open, from that tab as well.")]
     public ToggleNode ShowInventoryButton { get; set; } = new(false);
 
-    [Menu("Only Itemize Tracked Beasts", "During a regex itemize, skip any beast that isn't on your tracked list even if the in-game search matched it. The Bestiary search also looks at a beast's rare name, mods and recipes, so short regex fragments let untracked yellows through - and those have no price and can't be listed at Faustus. Turn off to itemize everything the search matches.")]
+    [Menu("Only Itemize Tracked Beasts", "During a regex itemize, skip any beast that isn't on your tracked list even if the in-game search matched it. The Bestiary search also looks at a beast's rare name, mods and recipes, so short regex fragments let untracked beasts through - and those have no price and can't be listed at Faustus. Turn off to itemize everything the search matches.")]
     public ToggleNode OnlyItemizeTrackedBeasts { get; set; } = new(true);
 
     [Menu("Auto-Stash After Itemize", "When enabled, itemized beasts are moved to the configured stash tab whenever inventory fills mid-itemize, and once itemizing finishes.")]
@@ -451,7 +449,7 @@ public class RestockSettings
     [Menu("Restock Hotkey", "Pull configured targets from stash into inventory. Stash must be open.")]
     public HotkeyNodeV2 RestockHotkey { get; set; } = new(System.Windows.Forms.Keys.None);
 
-    [Menu("Load Map Device Hotkey", "Ctrl-click configured items from inventory into the open Map Device slots.")]
+    [Menu("Load Map Device Hotkey", "Load the configured map into the open Map Device and check that a Bestiary Thread is set.")]
     public HotkeyNodeV2 LoadMapDeviceHotkey { get; set; } = new(System.Windows.Forms.Keys.None);
 
     [Menu("Selected Atlas Map", "Map to click on the Atlas before loading. 'Keep currently opened map' skips Atlas selection and uses whatever map is already loaded.")]
@@ -469,7 +467,7 @@ public class RestockSettings
     [Menu("Clear Non-Target Map Device Items", "Before loading, ctrl-click anything in the Map Device slots that isn't one of your targets back into inventory, and trim a target spread over more slots than its quantity asks for. Off leaves it in place, and a target with no free slot fails instead.")]
     public ToggleNode ClearNonTargetMapDeviceItems { get; set; } = new(true);
 
-    [Menu("Enable Map Regex Filter", "Before pulling a 'Map (Tier N)' target, paste the pattern below into the map-stash search bar and take only highlighted matches. Applies to map targets only - fragment and scarab targets are untouched.")]
+    [Menu("Enable Map Regex Filter", "Before pulling a 'Map (Tier N)' target, paste the pattern below into the map-stash search bar and take only highlighted matches. Applies to map targets only - other targets are untouched.")]
     public ToggleNode EnableMapRegexFilter { get; set; } = new(false);
 
     [Menu("Map Regex Pattern", "Pasted into the map-stash search bar before restocking maps. Build one at https://poe.re/#/maps. Restock fails rather than pulling unfiltered if this is empty while the filter is on.")]
@@ -477,11 +475,24 @@ public class RestockSettings
 
     // Target 1 holds the map, since the device fills its map slot from the first match.
     [Menu("Target 1")] public RestockTargetSettings Target1 { get; set; } = new() { ItemName = new TextNode("Map (Tier 16)") };
-    [Menu("Target 2")] public RestockTargetSettings Target2 { get; set; } = new() { ItemName = new TextNode("Bestiary Scarab of the Herd") };
-    [Menu("Target 3")] public RestockTargetSettings Target3 { get; set; } = new() { ItemName = new TextNode("Bestiary Scarab of Duplicating") };
+    [Menu("Target 2")] public RestockTargetSettings Target2 { get; set; } = new() { Enabled = new(false) };
+    [Menu("Target 3")] public RestockTargetSettings Target3 { get; set; } = new() { Enabled = new(false) };
     [Menu("Target 4")] public RestockTargetSettings Target4 { get; set; } = new() { Enabled = new(false) };
     [Menu("Target 5")] public RestockTargetSettings Target5 { get; set; } = new() { Enabled = new(false) };
     [Menu("Target 6")] public RestockTargetSettings Target6 { get; set; } = new() { Enabled = new(false) };
+
+    // 3.30 turned Scarabs into Threads, and the Map Device takes Threads straight from the
+    // stash. Saved Scarab and Thread targets have nothing left to restock, so they go off.
+    public void DisableThreadTargets()
+    {
+        foreach (var target in new[] { Target1, Target2, Target3, Target4, Target5, Target6 })
+        {
+            var name = target?.ItemName.Value ?? string.Empty;
+            if (name.Contains("Scarab", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("Thread", StringComparison.OrdinalIgnoreCase))
+                target.Enabled.Value = false;
+        }
+    }
 }
 
 [Submenu(CollapsedByDefault = true)]
@@ -492,7 +503,7 @@ public class RestockTargetSettings
     [Menu("Enabled")]
     public ToggleNode Enabled { get; set; } = new(true);
 
-    [Menu("Item Name", "Exact base item name (e.g. 'Bestiary Scarab of Duplicating').")]
+    [Menu("Item Name", "Exact base item name (e.g. 'Map (Tier 16)').")]
     public TextNode ItemName { get; set; } = new(string.Empty);
 
     [Menu("Quantity", "Target total in inventory (0-100). Restock tops up to this amount. Amounts above one stack are fine - they spill into more inventory cells and, in the Map Device, into more slots.")]
@@ -1045,6 +1056,18 @@ public class ExplorationRouteDebugSettings
 [Submenu(CollapsedByDefault = true)]
 public class AnalyticsSettings
 {
+    // Analytics is private for now: it only shows up and runs when this marker file exists.
+    public static readonly bool Unlocked = File.Exists(
+        Path.Combine(Directory.GetCurrentDirectory(), "config", "global", "BeastsV3.dev"));
+
+    // Switches off everything a locked install has no menu for.
+    public void TurnOff()
+    {
+        Enable.Value = false;
+        Web.Enabled.Value = false;
+        Telemetry.ShareAnonymousData.Value = false;
+    }
+
     [Menu("Enable Analytics", "Master toggle for map-record persistence, autosave, and the analytics overlay. Disable to stop all analytics work.")]
     public ToggleNode Enable { get; set; } = new(true);
 
@@ -1087,7 +1110,7 @@ public class TelemetrySettings
 {
     [Menu("Enable Sharing",
         "OFF BY DEFAULT. When on, each completed map sends: league, map tier, area name, duration, " +
-        "beast counts, which beasts were captured, which scarabs were used, and your allocated atlas " +
+        "beast counts, which beasts were captured, which map device items were used, and your allocated atlas " +
         "passives. It never sends your account name, character name, prices, session names or file paths. " +
         "Use Preview Submission to read the exact bytes before enabling.")]
     public ToggleNode ShareAnonymousData { get; set; } = new(false);

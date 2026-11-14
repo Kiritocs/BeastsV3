@@ -7,7 +7,7 @@ using BeastsV3.Shared;
 using ExileCore;
 using ExileCore.PoEMemory.Components;
 using ExileCore.PoEMemory.MemoryObjects;
-using ImGuiNET;
+using Hexa.NET.ImGui;
 using Color = SharpDX.Color;
 using Vector3 = System.Numerics.Vector3;
 

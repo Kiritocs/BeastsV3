@@ -8,20 +8,24 @@ using ExileCore.PoEMemory;
 
 namespace BeastsV3.Beasts;
 
-// Reads the in-game quest tracker to find the "Capture X/Y beasts" line and completion state.
+// Reads the in-game quest tracker to find the red beast "(x/y)" line and completion state.
+// Since 3.30 Einhar's quest has a yellow line (kill) and a red line (capture); only red counts.
 // Used by the counter overlay and by SessionRecorder to detect a finished map.
 public static class BeastQuest
 {
     private static readonly Regex ProgressRegex = new(@"\((\d+)/(\d+)\)", RegexOptions.Compiled);
 
-    // Child-index path into IngameUi for the quest text, used when QuestTracker is missing.
-    private static readonly int[] FallbackQuestTextPath = { 4, 0, 0, 0, 0, 0, 1, 0, 1 };
+    // Child-index path into IngameUi for the tracker, used when QuestTracker is missing or stale.
+    private static readonly int[] FallbackTrackerPath = { 4, 0 };
+
+    // Levels walked below the tracker; an objective line's text sits seven down.
+    private const int MaxTextDepth = 8;
 
     // Last logged read, so the breadcrumbs below fire on change instead of on every poll.
     private static string _lastLoggedProgress;
     private static bool _lastLoggedMissionComplete;
 
-    // Reads the captured/total beast counts from the quest line.
+    // Reads the captured/total red beast counts from the quest line.
     public static bool TryGetProgress(GameController game, out int current, out int total)
     {
         current = 0;
@@ -38,7 +42,7 @@ public static class BeastQuest
         }
 
         LogOnChange(ref _lastLoggedProgress, "none",
-            "Quest progress unreadable: no candidate element carried a beast/einhar line with (x/y).");
+            "Quest progress unreadable: no visible tracker line mentions red beasts with (x/y).");
         return false;
     }
 
@@ -61,32 +65,29 @@ public static class BeastQuest
         return false;
     }
 
-    // Yields every string that might hold the beast quest line, best source first, tagged
-    // with where it came from.
+    // Yields every visible text in the quest tracker, tagged with where it came from. Walking
+    // the texts instead of fixed child indices survives the tracker gaining or moving lines.
     private static IEnumerable<(string Text, string Source)> QuestTextCandidates(GameController game)
     {
         var ui = game?.IngameState?.IngameUi;
 
-        var tracker = ui?.QuestTracker;
-        if (tracker != null)
+        foreach (var text in VisibleTexts(ui?.QuestTracker, 0)) yield return (text, "tracker");
+        foreach (var text in VisibleTexts(ImGuiEx.GetChildAt(ui, FallbackTrackerPath), 0))
+            yield return (text, "fallback-path");
+    }
+
+    private static IEnumerable<string> VisibleTexts(Element element, int depth)
+    {
+        if (element == null || !(depth == 0 ? element.IsVisible : element.IsVisibleLocal)) yield break;
+
+        var text = element.Text;
+        if (!string.IsNullOrWhiteSpace(text)) yield return text;
+
+        if (depth >= MaxTextDepth) yield break;
+        foreach (var child in element.Children)
         {
-            yield return (GetPrimaryEntryText(tracker), "tracker:primary");
-
-            var entries = GetEntriesContainer(tracker)?.Children;
-            if (entries != null)
-            {
-                var index = 0;
-                foreach (var entry in entries)
-                {
-                    var label = $"tracker:entry{index++}";
-                    if (entry?.IsVisible == true) yield return (GetEntryText(entry), label);
-                }
-            }
+            foreach (var childText in VisibleTexts(child, depth + 1)) yield return childText;
         }
-
-        // Yielded last so tracker entries take priority.
-        var fallback = ImGuiEx.GetChildAt(ui, FallbackQuestTextPath);
-        if (!string.IsNullOrWhiteSpace(fallback?.Text)) yield return (fallback.Text, "fallback-path");
     }
 
     // Called from a polled path, so it only writes when the answer actually changed.
@@ -108,28 +109,14 @@ public static class BeastQuest
         _lastLoggedMissionComplete = false;
     }
 
-    private static Element GetEntriesContainer(Element tracker) => ImGuiEx.GetChildAt(tracker, 0, 0);
-
-    private static Element GetPrimaryEntry(Element tracker) => GetEntriesContainer(tracker)?.GetChildAtIndex(0);
-
-    private static string GetEntryText(Element entry) => ImGuiEx.GetChildAt(entry, 0, 1, 0, 1)?.Text;
-
-    private static string GetPrimaryEntryText(Element tracker)
-    {
-        var entry = GetPrimaryEntry(tracker);
-        return entry?.IsVisible == true ? GetEntryText(entry) : null;
-    }
-
-    // Parses "(x/y)" from text that also mentions beast or Einhar.
+    // Parses "(x/y)" from the line that mentions red beasts.
     private static bool TryParse(string text, out int current, out int total)
     {
         current = 0;
         total = 0;
 
         if (string.IsNullOrWhiteSpace(text)) return false;
-        if (!text.Contains("beast", StringComparison.OrdinalIgnoreCase) &&
-            !text.Contains("einhar", StringComparison.OrdinalIgnoreCase))
-            return false;
+        if (!text.Contains("red beast", StringComparison.OrdinalIgnoreCase)) return false;
 
         var match = ProgressRegex.Match(text);
         if (!match.Success) return false;

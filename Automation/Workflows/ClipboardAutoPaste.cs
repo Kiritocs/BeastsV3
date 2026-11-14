@@ -8,7 +8,7 @@ using BeastsV3.Automation.Ui;
 using BeastsV3.Beasts;
 using BeastsV3.Plugin.Settings;
 using BeastsV3.Shared;
-using ImGuiNET;
+using Hexa.NET.ImGui;
 
 namespace BeastsV3.Automation.Workflows;
 

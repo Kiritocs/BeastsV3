@@ -18,19 +18,18 @@ using SharpVec2 = SharpDX.Vector2;
 
 namespace BeastsV3.Automation.Workflows;
 
-// Loads the configured Restock targets into the Map Device slots.
+// Loads the configured map into the Map Device. Threads are not loaded: since 3.30 they are
+// set on the device's thread slots and remembered, so this only checks that one is set.
 //
 // Flow:
 //   1. Open the Map Device, walking to it if needed.
 //   2. Select the configured Atlas map, if any.
 //   3. Clear non-target items out of the device.
-//   4. Ctrl-click each target in from storage or inventory, splitting stacks that overshoot.
-//   5. Verify quantities and warn on shortfalls.
+//   4. Ctrl-click the map in from storage or inventory.
+//   5. Verify the map is loaded and a Bestiary Thread is set; stop otherwise.
 //   6. Capture the prepared cost breakdown and move the cursor to Activate.
 public sealed class MapDeviceLoad
 {
-    // Ceiling on how long the split prompt may take to appear.
-    private const int SplitPromptTimeoutMs = 700;
 
     private readonly Runner _runner;
     private readonly AutomationInput _input;
@@ -106,10 +105,12 @@ public sealed class MapDeviceLoad
                 "Map Device window still isn't visible after opening + map selection. Aborting.");
         }
 
-        var targets = EnabledTargets();
+        // Since 3.30 only the map is an item in the device. Threads are picked on its thread
+        // slots, come straight from the stash and stay set between maps.
+        var targets = EnabledTargets().Where(t => t.IsMapTier).ToList();
         if (targets.Count == 0)
         {
-            _runner.UpdateStatus("Map device load: no enabled restock targets to load.");
+            _runner.UpdateStatus("Map device load: no enabled 'Map (Tier N)' restock target to load.");
             return;
         }
 
@@ -122,9 +123,6 @@ public sealed class MapDeviceLoad
         // Settles the slot count first, so free-slot reads are accurate and the consumed-run check
         // below sees the width the config asks for: strays out, then targets spread too wide.
         await ClearNonTargetItemsAsync(dedupedTargets, ct);
-        await TrimSurplusTargetSlotsAsync(dedupedTargets, ct);
-
-        dedupedTargets = ApplyConsumedRunDeficit(dedupedTargets);
 
         await AutoRestockIfShortAsync(dedupedTargets, ct);
 
@@ -139,7 +137,7 @@ public sealed class MapDeviceLoad
         LogSlotContents("after load");
 
         // Re-scans and stops on shortfalls rather than warning. A device short of a slot runs the
-        // map with fewer scarabs than configured for as long as the stock lasts, which is worth
+        // map with fewer items than configured for as long as the stock lasts, which is worth
         // failing the load over - there is nothing left to retry with anyway, restock already ran.
         var mismatches = VerifyLoadedTargets(dedupedTargets);
         if (mismatches.Count > 0)
@@ -153,6 +151,14 @@ public sealed class MapDeviceLoad
                 $"Map Device could not be filled: {summary}. Restock those and load again.");
         }
 
+        // Without a Bestiary Thread the map has no beasts, so a run would be wasted.
+        if (!MapDeviceUi.ReadThreads(_mapDevice.Window).Any(t => t.Name == BestiaryThreadName))
+        {
+            throw new MapSupplyExhaustedException(
+                $"The Map Device has no {BestiaryThreadName} set. Click a thread slot, pick it and set the count; " +
+                "the device remembers it for later maps.");
+        }
+
         // Records the prepared cost breakdown for the upcoming map.
         CaptureCostBreakdown();
 
@@ -164,6 +170,8 @@ public sealed class MapDeviceLoad
 
     // Ctrl-clicks non-target items out of the device. Slot kinds with no configured target
     // are left untouched.
+    private const string BestiaryThreadName = "Bestiary Thread";
+
     private async Task ClearNonTargetItemsAsync(List<TargetInfo> targets, CancellationToken ct)
     {
         if (!_settings.Restock.ClearNonTargetMapDeviceItems.Value) return;
@@ -188,56 +196,6 @@ public sealed class MapDeviceLoad
         await EvictSlotsAsync(strays, "Clearing non-target items out of the Map Device", ct);
 
         LogSlotContents("after clearing non-targets");
-    }
-
-    // Ctrl-clicks a target's surplus slots back into inventory. Activation applies a fragment once
-    // per slot it occupies, so a scarab configured for one stack but sitting in two both costs and
-    // reads double - lowering a quantity leaves the device exactly like that. The shallowest slots
-    // go first, keeping the deepest ones whole.
-    private async Task TrimSurplusTargetSlotsAsync(List<TargetInfo> targets, CancellationToken ct)
-    {
-        var trimmed = false;
-
-        foreach (var target in targets)
-        {
-            if (target.IsMapTier) continue;
-
-            // Without a readable stack size the wanted count falls back to a single slot, which
-            // would read a legitimately two-slot target as surplus. Nothing is trimmed on a guess.
-            if (MaxStackSizeFor(target) <= 0) continue;
-
-            var wanted = SlotsWantedFor(target);
-            var held = _mapDevice.GetSlotItems()
-                .Where(s => !s.IsEmpty && s.IsClickable && SlotHoldsTarget(s, target))
-                .OrderBy(s => s.StackSize)
-                .ToList();
-
-            if (held.Count <= wanted) continue;
-
-            var surplus = held.Take(held.Count - wanted).ToList();
-            var described = string.Join(", ", surplus.Select(s => $"[{s.SlotIndex}] x{s.StackSize}"));
-            var occupies = $"'{target.ItemName}' sits in {held.Count} Map Device slots but its quantity " +
-                           $"({target.CumulativeQuantity}) asks for {wanted}";
-
-            if (!_settings.Restock.ClearNonTargetMapDeviceItems.Value)
-            {
-                Log.Warn($"{occupies}, so every map applies it {held.Count} times over. " +
-                         $"Turn on 'Clear Non-Target Map Device Items' to move {described} out, " +
-                         "or take them out by hand.");
-                continue;
-            }
-
-            Log.Info($"{occupies}. Moving {described} to inventory.");
-
-            await EvictSlotsAsync(
-                surplus,
-                $"Trimming {target.ItemName} to {wanted} Map Device slot{ImGuiEx.PluralSuffix(wanted)}",
-                ct);
-
-            trimmed = true;
-        }
-
-        if (trimmed) LogSlotContents("after trimming surplus slots");
     }
 
     // Ctrl-clicks the given slots out to inventory and waits for them to empty.
@@ -292,7 +250,6 @@ public sealed class MapDeviceLoad
         CountLoadedFor(target) + StoredQuantityFor(target) + InventoryQuantityFor(target);
 
     // Runs Restock when a target cannot be satisfied from the device, storage and inventory.
-    // Must run after ApplyConsumedRunDeficit so a partly consumed device does not read short.
     private async Task AutoRestockIfShortAsync(List<TargetInfo> targets, CancellationToken ct)
     {
         if (!_settings.Restock.AutoRestockMissingMapDeviceItems.Value) return;
@@ -393,8 +350,8 @@ public sealed class MapDeviceLoad
             var stillNeeded = requested - beforeLoaded;
 
             // Device storage is drained before inventory.
-            var batch = CollectLoadBatch(target, stillNeeded, out var overshooting);
-            if (batch.Count == 0 && overshooting == null)
+            var batch = CollectLoadBatch(target, stillNeeded);
+            if (batch.Count == 0)
             {
                 _runner.UpdateStatus($"Loaded {target.ItemName}: {beforeLoaded}/{requested}. Nothing left to load.");
                 break;
@@ -402,7 +359,7 @@ public sealed class MapDeviceLoad
 
             // What this pass should add. A pass can fall short when storage and inventory run out,
             // so the settle waits for what was actually clicked.
-            var expectedGain = await SendLoadPassAsync(target, batch, overshooting, stillNeeded, ct);
+            var expectedGain = await SendLoadPassAsync(target, batch, ct);
             if (expectedGain == null)
             {
                 if (++stallCount >= 3)
@@ -467,17 +424,10 @@ public sealed class MapDeviceLoad
     }
 
     // Sends one transfer pass and reports the quantity it should add, or null when no source
-    // cell could be clicked. The split runs last, so its prompt opens against a settled slot.
+    // cell could be clicked.
     private async Task<int?> SendLoadPassAsync(
-        TargetInfo target, List<NormalInventoryItem> batch, NormalInventoryItem overshooting,
-        int stillNeeded, CancellationToken ct)
+        TargetInfo target, List<NormalInventoryItem> batch, CancellationToken ct)
     {
-        if (batch.Count == 0)
-        {
-            await TransferPartialStackAsync(overshooting, stillNeeded, target, ct);
-            return stillNeeded;
-        }
-
         var expectedGain = batch.Sum(item => Math.Max(1, MoveableIntoSlot(target, item)));
         var clicked = await _batch.CtrlClickAllAsync(
             BatchClicker.CellCenters(batch), ct, guard: () => _mapDevice.IsWindowVisible);
@@ -639,7 +589,6 @@ public sealed class MapDeviceLoad
     private void CaptureCostBreakdown()
     {
         var breakdown = new List<MapCostItem>();
-        var usesDupScarab = false;
 
         foreach (var slot in _mapDevice.GetSlotItems())
         {
@@ -649,10 +598,16 @@ public sealed class MapDeviceLoad
 
             _prices.TryGetItemPriceChaos(name, out var chaos);
             breakdown.Add(new MapCostItem { ItemName = name, UnitPriceChaos = chaos });
-            if (CostTracker.IsDuplicatingScarabItemName(name)) usesDupScarab = true;
         }
 
-        _cost.SetPrepared(breakdown, usedDuplicatingScarabOverride: usesDupScarab);
+        foreach (var (name, count) in MapDeviceUi.ReadThreads(_mapDevice.Window))
+        {
+            _prices.TryGetItemPriceChaos(name, out var chaos);
+            for (var i = 0; i < count; i++)
+                breakdown.Add(new MapCostItem { ItemName = name, UnitPriceChaos = chaos });
+        }
+
+        _cost.SetPrepared(breakdown);
     }
 
     private async Task MoveCursorToActivateButtonAsync()
@@ -708,10 +663,8 @@ public sealed class MapDeviceLoad
         Ordered(_mapDevice.StorageItems, target);
 
     // Sources to ctrl-click into the device in one pass, storage before inventory.
-    private List<NormalInventoryItem> CollectLoadBatch(
-        TargetInfo target, int stillNeeded, out NormalInventoryItem overshooting)
+    private List<NormalInventoryItem> CollectLoadBatch(TargetInfo target, int stillNeeded)
     {
-        overshooting = null;
         var batch = new List<NormalInventoryItem>();
         if (stillNeeded <= 0) return batch;
 
@@ -723,15 +676,8 @@ public sealed class MapDeviceLoad
         {
             if (running >= stillNeeded) break;
 
-            var moveable = MoveableIntoSlot(target, candidate);
-            if (!target.IsMapTier && running + moveable > stillNeeded)
-            {
-                overshooting = candidate;
-                break;
-            }
-
             batch.Add(candidate);
-            running += Math.Max(1, moveable);
+            running += Math.Max(1, MoveableIntoSlot(target, candidate));
 
             if (!_batch.Enabled) break;
         }
@@ -788,107 +734,6 @@ public sealed class MapDeviceLoad
             ? _mapDevice.CountLoadedByMapTier(target.MapTier.Value)
             : _mapDevice.CountLoadedByName(target.ItemName);
 
-    // Takes exactly `quantity` from a stack via the split prompt and clicks it into the
-    // destination slot. Falls back to a whole-stack ctrl-click when that is not possible.
-    private async Task TransferPartialStackAsync(NormalInventoryItem item, int quantity, TargetInfo target,
-        CancellationToken ct)
-    {
-        var timing = _settings.Timing;
-        var loadedBefore = CountLoadedFor(target);
-
-        var slotRect = FindDestinationSlotRect(target);
-        if (slotRect == null)
-        {
-            Log.Debug($"No Map Device slot found to place a partial stack of '{target.ItemName}'. Falling back to a whole-stack ctrl-click.");
-            await _input.CtrlClickAtAsync(item.GetClientRect());
-            return;
-        }
-
-        var rect = item.GetClientRect();
-        await _input.ClickAtAsync(
-            rect, MouseButtons.Left,
-            preDelayMs: timing.Clicks.UiClickPreDelayMs.Value,
-            postDelayMs: timing.Clicks.UiClickPostDelayMs.Value,
-            modifiers: new[] { Keys.LShiftKey });
-
-        // Waits for the split prompt, not the destroy-confirmation dialog.
-        var opened = await _waits.WaitForAsync(
-            () => _inventory.IsStackSplitDialogVisible,
-            timeoutMs: SplitPromptTimeoutMs,
-            pollDelayMs: timing.Polling.FastPollDelayMs.Value);
-
-        if (!opened)
-        {
-            Log.Debug($"Split prompt did not open for '{target.ItemName}'. Falling back to a whole-stack ctrl-click.");
-            await _input.CtrlClickAtAsync(item.GetClientRect());
-            return;
-        }
-
-        // Verifies the typed amount before committing it.
-        var wanted = quantity.ToString(CultureInfo.InvariantCulture);
-        var typed = false;
-        for (var attempt = 1; attempt <= 2 && !typed; attempt++)
-        {
-            ct.ThrowIfCancellationRequested();
-            await _input.TypeDigitsAsync(wanted);
-            typed = await _waits.WaitForAsync(
-                () => string.Equals(_inventory.StackSplitQuantityText, wanted, StringComparison.Ordinal),
-                timeoutMs: SplitPromptTimeoutMs,
-                pollDelayMs: timing.Polling.FastPollDelayMs.Value);
-
-            if (!typed)
-                Log.Debug($"Split quantity attempt {attempt}: field reads '{_inventory.StackSplitQuantityText}', wanted '{wanted}'.");
-        }
-
-        if (!typed)
-            throw new InvalidOperationException(
-                $"Could not enter {quantity} into the split prompt for '{target.ItemName}'. Field reads '{_inventory.StackSplitQuantityText}'.");
-
-        await _input.TapKeyAsync(Keys.Enter, timing.Clicks.KeyTapDelayMs.Value, timing.Polling.FastPollDelayMs.Value);
-
-        var closed = await _waits.WaitForAsync(
-            () => !_inventory.IsStackSplitDialogVisible,
-            timeoutMs: SplitPromptTimeoutMs,
-            pollDelayMs: timing.Polling.FastPollDelayMs.Value);
-
-        if (!closed)
-            throw new InvalidOperationException(
-                $"Split prompt for '{target.ItemName}' never closed after entering {quantity}.");
-
-        // Checks whether the split already landed, since clicking again would pick it up.
-        var landedOnConfirm = await _waits.WaitForAsync(
-            () => CountLoadedFor(target) >= loadedBefore + quantity,
-            timeoutMs: Math.Max(150, timing.Polling.FastPollDelayMs.Value * 3),
-            pollDelayMs: timing.Polling.FastPollDelayMs.Value);
-
-        if (landedOnConfirm)
-        {
-            Log.Debug($"Split {quantity} of '{target.ItemName}' went straight into the Map Device - no placement click needed.");
-            return;
-        }
-
-        // Drops the cursor-held split into the slot.
-        var destination = slotRect.Value;
-        await _input.ClickAtAsync(
-            destination, MouseButtons.Left,
-            preDelayMs: Math.Max(timing.Clicks.UiClickPreDelayMs.Value, 100),
-            postDelayMs: timing.Clicks.CtrlClickPostDelayMs.Value);
-
-        // Confirms the slot count rose, which the caller's looser check would not catch.
-        var landed = await _waits.WaitForAsync(
-            () => CountLoadedFor(target) >= loadedBefore + quantity,
-            timeoutMs: _input.ScaleTimeout(timing.Timeouts.MapDeviceTransferTimeoutMs.Value),
-            pollDelayMs: timing.Polling.FastPollDelayMs.Value);
-
-        if (!landed)
-            throw new InvalidOperationException(
-                $"Split {quantity} of '{target.ItemName}' but the Map Device slot at " +
-                $"({destination.Center.X:0}, {destination.Center.Y:0}) reads {CountLoadedFor(target)} " +
-                $"(was {loadedBefore}). The stack is probably still on the cursor.");
-
-        Log.Debug($"Split {quantity} of '{target.ItemName}' into Map Device slot at ({destination.Center.X:0}, {destination.Center.Y:0}).");
-    }
-
     // True when enough slots can take the target: the ones it already occupies plus the empty
     // ones, measured against the slot count its quantity needs. Unreadable slots do not block.
     private bool HasSlotFor(TargetInfo target, out string occupants)
@@ -910,29 +755,8 @@ public sealed class MapDeviceLoad
         return candidates.Count == 0 || usable >= wanted;
     }
 
-    // The slot a split should be dropped into. While the target occupies fewer slots than it
-    // wants, an empty one comes first: width is what the map reads, so opening the missing slot
-    // beats deepening a stack that already counts. Otherwise it is the matching slot with room -
-    // past one full stack the request needs a second slot, and aiming at a full one leaves the
-    // stack stuck on the cursor. When neither exists the caller falls back to a plain ctrl-click.
-    private SharpDX.RectangleF? FindDestinationSlotRect(TargetInfo target)
-    {
-        var candidates = _mapDevice.GetSlotItems()
-            .Where(s => s.IsClickable && s.IsMapSlot == target.IsMapTier)
-            .ToList();
-        if (candidates.Count == 0) return null;
-
-        var empty = candidates.FirstOrDefault(s => s.IsEmpty);
-        if (empty != null && SlotsHeldFor(target) < SlotsWantedFor(target)) return empty.Rect;
-
-        var withRoom = candidates.FirstOrDefault(s => !s.IsEmpty && MatchesSlot(s, target) && s.Headroom > 0);
-        if (withRoom != null) return withRoom.Rect;
-
-        return empty?.Rect;
-    }
-
     // Room in the slot this target's next transfer will land in. Per-slot, not per-target:
-    // two slots holding the same scarab take two full stacks, and a combined total would
+    // two slots holding the same item take two full stacks, and a combined total would
     // call the device full after the first.
     private int SlotHeadroomFor(TargetInfo target, int maxStackSize)
     {
@@ -981,7 +805,7 @@ public sealed class MapDeviceLoad
 
     // Slots a target's request needs: one stack per slot, rounded up. Activating consumes one
     // item from every occupied slot, so it is the slot count - not the item total - that decides
-    // how many scarabs a map actually gets. Unreadable stack info falls back to a single slot.
+    // how many items a map actually gets. Unreadable stack info falls back to a single slot.
     private int SlotsWantedFor(TargetInfo target)
     {
         if (target.IsMapTier) return 1;
@@ -1006,7 +830,7 @@ public sealed class MapDeviceLoad
 
     // Returns every target the device did not end up holding: short on items, or short on the
     // slots those items were meant to occupy. Slots are checked separately because they are what
-    // the map reads - one slot holding a double stack still applies the scarab once.
+    // the map reads - one slot holding a double stack still applies the item once.
     private List<(string Name, int Loaded, int Requested, int SlotsHeld, int SlotsWanted)>
         VerifyLoadedTargets(List<TargetInfo> targets)
     {
@@ -1048,57 +872,6 @@ public sealed class MapDeviceLoad
             // Fragment targets load as one stack; the map slot takes exactly one map.
             result.Add(new TargetInfo(name, mapTier.HasValue ? 1 : qty, mapTier));
         }
-        return result;
-    }
-
-    // Lowers a fragment target's request to what the device already holds when it is part-way
-    // through its stock: every wanted slot still occupied, just shallower than a fresh load.
-    //
-    // Judged per target by slot count. A run consumes one item per occupied slot, so an item
-    // deficit on its own says nothing about how many runs went by - and once a target spans two
-    // slots it says the wrong thing outright, reading a slot that ran dry as a device deep into
-    // its stock and leaving it to run one scarab short forever.
-    private List<TargetInfo> ApplyConsumedRunDeficit(List<TargetInfo> targets)
-    {
-        var result = new List<TargetInfo>();
-
-        foreach (var target in targets)
-        {
-            if (target.IsMapTier)
-            {
-                result.Add(target);
-                continue;
-            }
-
-            var loaded = CountLoadedFor(target);
-            var slotsWanted = SlotsWantedFor(target);
-            var slotsHeld = SlotsHeldFor(target);
-
-            // A missing slot is an under-loaded device, not a consumed one: the request stands so
-            // restock and load rebuild it to its full width.
-            if (slotsHeld < slotsWanted)
-            {
-                if (slotsHeld > 0)
-                    Log.Info($"Map Device holds '{target.ItemName}' x{loaded} in {slotsHeld} of " +
-                             $"{slotsWanted} wanted slot{ImGuiEx.PluralSuffix(slotsWanted)}. Reloading to full.");
-                result.Add(target);
-                continue;
-            }
-
-            // An empty or already-satisfied target is not a consumed-run state.
-            if (loaded <= 0 || loaded >= target.CumulativeQuantity)
-            {
-                result.Add(target);
-                continue;
-            }
-
-            Log.Info($"Map Device holds '{target.ItemName}' x{loaded} in {slotsHeld} " +
-                     $"slot{ImGuiEx.PluralSuffix(slotsHeld)}, {target.CumulativeQuantity - loaded} into its " +
-                     $"stock. Leaving those slots alone.");
-
-            result.Add(target with { CumulativeQuantity = loaded });
-        }
-
         return result;
     }
 

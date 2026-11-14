@@ -12,15 +12,14 @@ using BeastsV3.Plugin.Settings;
 using BeastsV3.Shared;
 using ExileCore.PoEMemory;
 using ExileCore.PoEMemory.Elements;
-using ImGuiNET;
+using Hexa.NET.ImGui;
 using RectangleF = SharpDX.RectangleF;
 using SharpVec2 = SharpDX.Vector2;
 
 namespace BeastsV3.Automation.Workflows;
 
 // Bestiary itemize and delete workflow. Delete ctrl-clicks each row's release button;
-// itemize ctrl-clicks the row body. A regex can filter the list; the yellow pass clears
-// the search instead and gates rows in code against BeastCatalog.
+// itemize ctrl-clicks the row body. A regex can filter the list.
 public sealed class Bestiary
 {
     private const int MaxConsecutiveStalls = 6;
@@ -46,9 +45,6 @@ public sealed class Bestiary
     // a batch that releases something, so scrolling can never replace progress.
     private const int MaxScrollsBetweenBatches = 40;
 
-    // Same budget for a sweep, which runs unfiltered and can face far longer stuck patches.
-    private const int MaxScrollsBetweenSweepBatches = 250;
-
     // Extra upward ticks when backing out, so the grid lands at the top.
     private const int ScrollBackOvershoot = 3;
 
@@ -57,13 +53,6 @@ public sealed class Bestiary
 
     // Consecutive "grid did not move" readings before a downward scroll counts as the end.
     private const int NoMoveSamplesForBottom = 2;
-
-    // Clickable cells a sweep lines up before committing a batch (~one viewport: 3 x 4).
-    private const int GatherTargetCells = 9;
-
-    // Cap on notches spent gathering, and on empty ones before the batch goes as it is.
-    private const int MaxGatherScrolls = 6;
-    private const int MaxBarrenGatherScrolls = 2;
 
     // Movement below this counts as "the list did not move", i.e. already at the bottom.
     private const float ScrollMovedEpsilonPixels = 1f;
@@ -80,9 +69,6 @@ public sealed class Bestiary
 
     // Regex to reapply when the panel is reopened after an auto-stash interrupt.
     private string _activeRegexForResume = string.Empty;
-
-    // Set for a yellow pass, so a reopened panel gets its search cleared again.
-    private bool _clearFilterForResume;
 
     public Bestiary(Runner runner, AutomationInput input, Waits waits, BeastsSettings settings,
         BestiaryUi bestiaryUi, InventoryUi inventoryUi, ClipboardAutoPaste clipboard,
@@ -129,19 +115,8 @@ public sealed class Bestiary
             cancelledStatus: "Bestiary regex itemize cancelled.",
             isBestiaryClearRunning: true);
 
-    // Itemizes everything not in BeastCatalog - the inverse of a regex itemize.
-    public Task ItemizeYellowsAsync() =>
-        _runner.QueueAsync(
-            ct => RunItemizeGuardedAsync(ct, applyRegex: false, sweepYellows: true),
-            failureLabel: "Bestiary yellow itemize",
-            passthroughKeys: PassthroughKeys(),
-            uiCleanupOptions: new UiCleanupOptions { KeepBestiary = true, KeepInventory = true },
-            cancelledStatus: "Bestiary yellow itemize cancelled.",
-            isBestiaryClearRunning: true);
-
     // Itemizing only works while standing in the Menagerie.
-    private async Task<ClearResult> RunItemizeGuardedAsync(CancellationToken ct, bool applyRegex,
-        bool sweepYellows = false)
+    private async Task<ClearResult> RunItemizeGuardedAsync(CancellationToken ct, bool applyRegex)
     {
         if (!IsInMenagerie)
         {
@@ -154,7 +129,7 @@ public sealed class Bestiary
             }
         }
 
-        return await RunClearAsync(ct, deleteMode: false, applyRegex, sweepYellows: sweepYellows);
+        return await RunClearAsync(ct, deleteMode: false, applyRegex);
     }
 
     private bool IsInMenagerie =>
@@ -166,27 +141,21 @@ public sealed class Bestiary
     // Runs one clear pass. autoStashOnFull false ends the pass on a full inventory instead
     // of stashing; maxToProcess stops early after that many rows.
     public Task<ClearResult> RunClearBodyAsync(CancellationToken ct, bool deleteMode, bool applyRegex,
-        bool autoStashOnFull = true, int? maxToProcess = null, bool sweepYellows = false) =>
-        RunClearAsync(ct, deleteMode, applyRegex, autoStashOnFull, maxToProcess, sweepYellows);
+        bool autoStashOnFull = true, int? maxToProcess = null) =>
+        RunClearAsync(ct, deleteMode, applyRegex, autoStashOnFull, maxToProcess);
 
     // ---- core loop -----------------------------------------------------
 
     // Opens the tab, applies the filter and clicks rows in batches until none remain.
     private async Task<ClearResult> RunClearAsync(CancellationToken ct, bool deleteMode, bool applyRegex,
-        bool autoStashOnFull = true, int? maxToProcess = null, bool sweepYellows = false)
+        bool autoStashOnFull = true, int? maxToProcess = null)
     {
         await EnsureCapturedBeastsPanelOpenAsync(ct);
         ct.ThrowIfCancellationRequested();
 
         _activeRegexForResume = string.Empty;
-        _clearFilterForResume = sweepYellows;
 
-        // The yellow gate lives in code, so the game's search must not narrow the list first.
-        if (sweepYellows)
-        {
-            await ClearFilterAsync(ct);
-        }
-        else if (applyRegex)
+        if (applyRegex)
         {
             var regex = _clipboard.BuildRegex();
             if (string.IsNullOrWhiteSpace(regex))
@@ -204,9 +173,7 @@ public sealed class Bestiary
         // names, mods and recipes, so short regex fragments let untracked beasts through - and
         // those have no price and Faustus will not take them. Only applied when a regex is used.
         var skipped = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var eligible = sweepYellows
-            ? BuildYellowFilter(skipped)
-            : BuildEligibilityFilter(applyRegex, skipped);
+        var eligible = BuildEligibilityFilter(applyRegex, skipped);
 
         // Held for the whole pass in both modes.
         _input.ReleaseKeys(Keys.LControlKey, Keys.RControlKey);
@@ -216,7 +183,7 @@ public sealed class Bestiary
         var released = 0;
         int? baselineRemaining = null;
         var stallCount = 0;
-        var scroll = new ScrollState(sweepYellows ? MaxScrollsBetweenSweepBatches : MaxScrollsBetweenBatches);
+        var scroll = new ScrollState(MaxScrollsBetweenBatches);
 
         try
         {
@@ -244,7 +211,7 @@ public sealed class Bestiary
 
                 if (scan.Remaining == 0)
                 {
-                    await FinishAsync(deleteMode, released, autoStashOnFull, skipped, sweepYellows, ct);
+                    await FinishAsync(deleteMode, released, autoStashOnFull, skipped, ct);
                     return new ClearResult(released, 0);
                 }
 
@@ -285,18 +252,10 @@ public sealed class Bestiary
 
                     // Matches exist but none are in the viewport: mid-reflow or a stall.
                     if (stallCount >= MaxConsecutiveStalls)
-                        throw new InvalidOperationException(StalledWithNoClickableRowsMessage(scan, skipped, sweepYellows));
+                        throw new InvalidOperationException(StalledWithNoClickableRowsMessage(scan, skipped));
 
                     await _input.DelayAsync(_settings.Timing.Polling.FastPollDelayMs.Value);
                     continue;
-                }
-
-                if (sweepYellows && scroll.CanScroll)
-                {
-                    scan = await GatherMoreRowsAsync(scan, scroll, eligible, ct);
-
-                    // Everything eligible scrolled off the top; let the next pass re-read.
-                    if (scan.Rows.Count == 0) continue;
                 }
 
                 // Capped to free inventory cells when itemizing, and to whatever the caller's cap has left.
@@ -367,7 +326,7 @@ public sealed class Bestiary
             _input.PressKeyUp(Keys.LControlKey);
 
             // In the finally so it survives the stall throws and cancellation.
-            LogSkipped(skipped, sweepYellows);
+            LogSkipped(skipped);
         }
     }
 
@@ -525,49 +484,6 @@ public sealed class Bestiary
         scroll.NoMoveSamples = 0;
     }
 
-    // A sparse viewport is worth widening first. In a sweep an eligible row often sits alone,
-    // and clicking it alone costs a full row scan plus a release wait. One notch trades the
-    // top line for a new one, so two notches that add nothing mean the list is simply sparse.
-    private async Task<ViewportScan> GatherMoreRowsAsync(
-        ViewportScan scan, ScrollState scroll, Func<CapturedBeast, bool> eligible, CancellationToken ct)
-    {
-        var gatherTarget = Math.Min(GatherTargetCells, Math.Max(1, _inventoryUi.FreeCellCount()));
-        var barren = 0;
-
-        for (var gather = 0;
-             gather < MaxGatherScrolls && scan.Rows.Count < gatherTarget &&
-             scroll.CanScroll && barren < MaxBarrenGatherScrolls;
-             gather++)
-        {
-            ct.ThrowIfCancellationRequested();
-
-            var before = scan.Rows.Count;
-            var held = RowAddresses(scan.Rows);
-
-            scroll.Budget--;
-            scroll.ScrolledDown++;
-            await ScrollViewportAsync(scan.Viewport, -1, ct);
-
-            var next = ScanViewport(eligible);
-
-            // A notch that pushes an already-found row off the top is a bad trade - the pass is
-            // heading down and nothing comes back for it. Checked by address, since row counts stay
-            // the same as three cells leave the top and three arrive at the bottom.
-            if (!HoldsAll(next.Rows, held))
-            {
-                scroll.Budget--;
-                scroll.ScrolledDown = Math.Max(0, scroll.ScrolledDown - 1);
-                await ScrollViewportAsync(next.Viewport, 1, ct);
-                return ScanViewport(eligible);
-            }
-
-            scan = next;
-            barren = scan.Rows.Count > before ? 0 : barren + 1;
-        }
-
-        return scan;
-    }
-
     // Clicks a batch bottom-up so removals do not reflow the rows still queued.
     private async Task<int> ClickBatchAsync(
         ViewportScan scan, int batchSize, bool deleteMode, Func<CapturedBeast, bool> eligible, CancellationToken ct)
@@ -581,10 +497,10 @@ public sealed class Bestiary
         return clicked;
     }
 
-    private static string StalledWithNoClickableRowsMessage(ViewportScan scan, HashSet<string> skipped, bool sweepYellows) =>
+    private static string StalledWithNoClickableRowsMessage(ViewportScan scan, HashSet<string> skipped) =>
         $"{scan.Remaining} matching beast{ImGuiEx.PluralSuffix(scan.Remaining)} remain but none are in the viewport" +
         (scan.Blocked > 0
-            ? $" ({scan.Blocked} {(sweepYellows ? "catalogd" : "untracked")} beast{ImGuiEx.PluralSuffix(scan.Blocked)} covering it, and scrolling did not clear them" +
+            ? $" ({scan.Blocked} untracked beast{ImGuiEx.PluralSuffix(scan.Blocked)} covering it, and scrolling did not clear them" +
               (skipped.Count > 0 ? $": {string.Join(", ", skipped.Take(6))}" : string.Empty) + ")."
             : ".");
 
@@ -644,63 +560,15 @@ public sealed class Bestiary
         }
     }
 
-    // The per-row gate for a yellow run: every beast not in BeastCatalog. Uses the catalog
-    // and not the enabled Beast Prices list, which changes with what is worth listing and
-    // would start sweeping beasts the plugin can price. Unreadable rows are left alone.
-    private static Func<CapturedBeast, bool> BuildYellowFilter(HashSet<string> skipped)
-    {
-        return beast =>
-        {
-            if (!TryReadName(beast, out var trimmed)) return false;
-
-            if (!BeastCatalog.IsTracked(trimmed)) return true;
-
-            skipped.Add(trimmed);
-            return false;
-        };
-    }
-
     // The only place that says which beasts the search regex is letting through, which is
     // what tells you a fragment needs tightening.
-    private static void LogSkipped(HashSet<string> skipped, bool sweepYellows)
+    private static void LogSkipped(HashSet<string> skipped)
     {
         if (skipped.Count == 0) return;
-
-        if (sweepYellows)
-        {
-            Log.Debug(
-                $"Bestiary yellow itemize left {skipped.Count} catalogd beast type{ImGuiEx.PluralSuffix(skipped.Count)} " +
-                $"alone: {string.Join(", ", skipped.OrderBy(n => n, StringComparer.OrdinalIgnoreCase))}.");
-            return;
-        }
 
         Log.Debug(
             $"Bestiary itemize skipped {skipped.Count} untracked beast type{ImGuiEx.PluralSuffix(skipped.Count)} " +
             $"that the search regex matched: {string.Join(", ", skipped.OrderBy(n => n, StringComparer.OrdinalIgnoreCase))}.");
-    }
-
-    // The rows' element addresses, for checking a scroll did not shed any of them.
-    private static HashSet<long> RowAddresses(List<CapturedBeast> rows)
-    {
-        var addresses = new HashSet<long>(rows.Count);
-        foreach (var row in rows)
-        {
-            if (row != null) addresses.Add(row.Address);
-        }
-        return addresses;
-    }
-
-    // True when every address is still among `rows`.
-    private static bool HoldsAll(List<CapturedBeast> rows, HashSet<long> addresses)
-    {
-        if (addresses.Count == 0) return true;
-
-        var found = 0;
-        foreach (var row in rows)
-        {
-            if (row != null && addresses.Contains(row.Address)) found++;
-        }
-        return found >= addresses.Count;
     }
 
     // Scrolls the beast grid. Negative ticks scroll down, positive up. Ctrl stays held over
@@ -735,7 +603,7 @@ public sealed class Bestiary
 
     // Releases held keys and auto-stashes itemized beasts when configured.
     private async Task FinishAsync(bool deleteMode, int released, bool autoStashOnFull,
-        HashSet<string> skipped, bool sweepYellows, CancellationToken ct)
+        HashSet<string> skipped, CancellationToken ct)
     {
         if (!deleteMode && autoStashOnFull && released > 0 && CanAutoStash() &&
             _inventoryUi.VisibleCapturedMonsters().Count > 0)
@@ -749,31 +617,11 @@ public sealed class Bestiary
 
         if (released > 0)
         {
-            if (sweepYellows)
-            {
-                _runner.UpdateStatus(
-                    $"Bestiary yellow itemize complete. Itemized {released} beast{ImGuiEx.PluralSuffix(released)}." +
-                    (skipped.Count > 0
-                        ? $" Left {skipped.Count} catalogd beast type{ImGuiEx.PluralSuffix(skipped.Count)} in the Bestiary."
-                        : string.Empty));
-                return;
-            }
-
             _runner.UpdateStatus(
                 $"Bestiary {(deleteMode ? "delete" : "itemize")} complete. Processed {released} beast{ImGuiEx.PluralSuffix(released)}." +
                 (skipped.Count > 0
                     ? $" Skipped {skipped.Count} untracked beast type{ImGuiEx.PluralSuffix(skipped.Count)} the search also matched."
                     : string.Empty));
-            return;
-        }
-
-        if (sweepYellows)
-        {
-            _runner.UpdateStatus(
-                skipped.Count > 0
-                    ? $"Bestiary yellow itemize complete. Nothing to itemize - all {skipped.Count} " +
-                      $"captured beast type{ImGuiEx.PluralSuffix(skipped.Count)} are in the beast catalog."
-                    : "Bestiary yellow itemize complete. No captured beasts were found.");
             return;
         }
 
@@ -1009,9 +857,7 @@ public sealed class Bestiary
     {
         await EnsureCapturedBeastsPanelOpenAsync(ct);
 
-        if (_clearFilterForResume)
-            await ClearFilterAsync(ct);
-        else if (!string.IsNullOrWhiteSpace(_activeRegexForResume))
+        if (!string.IsNullOrWhiteSpace(_activeRegexForResume))
             await ApplyRegexAsync(_activeRegexForResume, ct);
 
         await WaitForRowsToSettleAsync();
@@ -1255,67 +1101,6 @@ public sealed class Bestiary
         return culled;
     }
 
-    // Empties the beast filter so an in-code gate sees every row. Deletes the selection
-    // rather than pasting an empty string, which the field does not reliably accept.
-    private async Task ClearFilterAsync(CancellationToken ct)
-    {
-        if (string.IsNullOrWhiteSpace(_bestiaryUi.FilterText) && !IsListFiltered()) return;
-
-        _runner.UpdateStatus("Clearing the Bestiary search field...");
-        var timing = _settings.Timing;
-
-        await WaitForRowsToSettleAsync();
-
-        for (var attempt = 1; attempt <= 3; attempt++)
-        {
-            ct.ThrowIfCancellationRequested();
-
-            _input.PressKeyDown(Keys.LControlKey);
-            try
-            {
-                await _input.TapKeyAsync(Keys.F,
-                    downHoldMs: timing.Clicks.KeyTapDelayMs.Value,
-                    postDelayMs: timing.Polling.FastPollDelayMs.Value);
-                await _input.DelayForUiCheckAsync(timing.Polling.UiCheckInitialSettleDelayMs.Value);
-
-                await _input.TapKeyAsync(Keys.A,
-                    downHoldMs: timing.Clicks.KeyTapDelayMs.Value,
-                    postDelayMs: timing.Polling.FastPollDelayMs.Value);
-            }
-            finally
-            {
-                // Released before Backspace and Enter, which are not Ctrl chords.
-                _input.PressKeyUp(Keys.LControlKey);
-            }
-
-            await _input.TapKeyAsync(Keys.Back,
-                downHoldMs: timing.Clicks.KeyTapDelayMs.Value,
-                postDelayMs: timing.Polling.FastPollDelayMs.Value);
-
-            await _input.TapKeyAsync(Keys.Enter,
-                downHoldMs: timing.Clicks.KeyTapDelayMs.Value,
-                postDelayMs: timing.Polling.UiCheckInitialSettleDelayMs.Value);
-
-            // Committing re-runs the match pass; wait for it before reading.
-            await WaitForRowsToSettleAsync();
-
-            if (string.IsNullOrWhiteSpace(_bestiaryUi.FilterText) && !IsListFiltered())
-            {
-                Log.Debug($"Bestiary search cleared on attempt {attempt}; {_bestiaryUi.TotalBeastCount()} rows visible.");
-                return;
-            }
-
-            Log.Debug(
-                $"Bestiary search clear attempt {attempt} left '{_bestiaryUi.FilterText}' " +
-                $"({_bestiaryUi.MatchingCount()} of {_bestiaryUi.TotalBeastCount()} rows matching).");
-        }
-
-        throw new InvalidOperationException(
-            $"Could not clear the Bestiary search field (it still reads '{_bestiaryUi.FilterText}', " +
-            $"{_bestiaryUi.MatchingCount()} of {_bestiaryUi.TotalBeastCount()} rows matching). " +
-            "Clear it manually and re-run, or check that Ctrl+F focuses the beast filter in-game.");
-    }
-
     // True when fewer rows match than the tab holds, so the filter is culling.
     private bool IsListFiltered()
     {
@@ -1336,6 +1121,5 @@ public sealed class Bestiary
     {
         _settings.BestiaryAutomation.DeleteHotkey?.Value.Key ?? Keys.None,
         _settings.BestiaryAutomation.RegexItemizeHotkey?.Value.Key ?? Keys.None,
-        _settings.BestiaryAutomation.YellowItemizeHotkey?.Value.Key ?? Keys.None,
     }.Where(k => k != Keys.None).ToArray();
 }
