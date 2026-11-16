@@ -18,6 +18,7 @@ namespace BeastsV3.Analytics;
 public sealed class CostTracker
 {
     private const string ExtraManualLineName = "Extra (Manual)";
+    private const string BestiaryThreadName = "Bestiary Thread";
 
     private readonly GameController _game;
     private readonly BeastsSettings _settings;
@@ -26,6 +27,14 @@ public sealed class CostTracker
     private readonly List<MapCostItem> _prepared = new();
     private readonly List<MapCostItem> _current = new();
     private DateTime _lastPollUtc = DateTime.MinValue;
+
+    // Free threads a Shaped Region puts into each thread slot, by slot position. Learned while
+    // the slot sits at its minimum and kept until another map is selected, since the count
+    // itself looks the same once the player adds threads of their own.
+    private readonly int[] _regionFreeBySlot = new int[3];
+    private string _deviceMapTitle;
+    private int _preparedRegionFreeBestiary;
+    private int _currentRegionFreeBestiary;
     private DateTime _lastReadUtc = DateTime.MinValue;
 
     // Map stats can lag the area load, so one read at map start is unreliable. Bounded retry:
@@ -99,12 +108,41 @@ public sealed class CostTracker
 
         CurrentAdditionalRedBeasts = reading.AdditionalRedBeasts;
         CurrentDuplicateCapturedChancePct = reading.DuplicateCapturedChancePct;
+        AddBestiaryThreadsTheDeviceMissed(reading);
 
         if (!_modifierLogged)
         {
             _modifierLogged = true;
             LogMapModifiers();
         }
+    }
+
+    // The Map Device only names a thread once its slot was hovered, so a thread picked by hand
+    // can be missing from the cost. The map itself says how many Bestiary Threads it got and
+    // how many of those were free, which fills the gap. Only ever adds: a device read that
+    // already lists them all is left alone.
+    private void AddBestiaryThreadsTheDeviceMissed(MapModifierStats.Reading reading)
+    {
+        var paid = Math.Max(0, reading.PaidBestiaryThreads - _currentRegionFreeBestiary);
+        var listed = _current.Count(x => string.Equals(x.ItemName, BestiaryThreadName, StringComparison.OrdinalIgnoreCase));
+
+        if (paid == listed) return;
+
+        if (paid < listed)
+        {
+            Log.Info($"Map cost: the Map Device listed {listed} Bestiary Thread(s) but the map reports {paid} paid " +
+                     $"({reading.BestiaryThreads} on the map, {reading.FreeThreads} free from the atlas, " +
+                     $"{_currentRegionFreeBestiary} free from a Shaped Region). Cost left as read from the device.");
+            return;
+        }
+
+        _prices.TryGetItemPriceChaos(BestiaryThreadName, out var price);
+        for (var i = listed; i < paid; i++)
+            _current.Add(new MapCostItem { ItemName = BestiaryThreadName, UnitPriceChaos = price });
+
+        Log.Info($"Map cost: added {paid - listed} Bestiary Thread(s) at {price:0.#}c from the map's own count " +
+                 $"({reading.BestiaryThreads} on the map, {reading.FreeThreads} free from the atlas, " +
+                 $"{_currentRegionFreeBestiary} free from a Shaped Region, Map Device listed {listed}).");
     }
 
     // Logged separately from "Map cost armed", which is written at map start before these
@@ -138,6 +176,7 @@ public sealed class CostTracker
         _current.Clear();
         _current.AddRange(CloneList(_prepared));
         _prepared.Clear();
+        _currentRegionFreeBestiary = _preparedRegionFreeBestiary;
 
         // Cleared for the new map, then relatched by LatchMapModifiers once inside it.
         // Carrying the previous map's stats over would be worse than having none.
@@ -236,12 +275,54 @@ public sealed class CostTracker
             }
         }
 
-        // One line per thread spent, so the cost is count x price.
-        foreach (var (name, count) in MapDeviceUi.ReadThreads(window))
-        {
-            for (var i = 0; i < count; i++) names.Add(name);
-        }
+        AddThreadNames(window, names);
         return true;
+    }
+
+    private static bool IsBestiaryThread(string name) =>
+        string.Equals(name, BestiaryThreadName, StringComparison.OrdinalIgnoreCase);
+
+    // One line per thread paid for, so the cost is count x price. A Shaped Region's free
+    // threads sit inside the slot's count and are taken off again.
+    private void AddThreadNames(ExileCore.PoEMemory.Element window, List<string> names)
+    {
+        // Another map selected: what was learned about the last one no longer holds.
+        var title = (window.GetType().GetProperty("Title")?.GetValue(window) as ExileCore.PoEMemory.Element)?.Text?.Trim();
+        if (!string.IsNullOrEmpty(title) && !string.Equals(title, _deviceMapTitle, StringComparison.Ordinal))
+        {
+            _deviceMapTitle = title;
+            Array.Clear(_regionFreeBySlot);
+        }
+
+        var slots = MapDeviceUi.ReadThreadSlots(window);
+        var namedBestiary = slots.Any(s => IsBestiaryThread(s.Name));
+        _preparedRegionFreeBestiary = 0;
+
+        for (var i = 0; i < slots.Count && i < _regionFreeBySlot.Length; i++)
+        {
+            var slot = slots[i];
+            if (slot.State != MapDeviceUi.ThreadSlotState.Picked)
+            {
+                _regionFreeBySlot[i] = 0;
+                continue;
+            }
+
+            if (slot.AtMinimum && _regionFreeBySlot[i] != slot.Count)
+            {
+                _regionFreeBySlot[i] = slot.Count;
+                Log.Debug($"Map Device: thread slot {i + 1} cannot go below {slot.Count} on '{_deviceMapTitle}', " +
+                          "so that many threads are free from a Shaped Region.");
+            }
+
+            var free = Math.Min(_regionFreeBySlot[i], slot.Count);
+
+            // A slot without a name is taken for the Bestiary one only when no slot names it.
+            if (IsBestiaryThread(slot.Name) || (slot.Name == null && !namedBestiary))
+                _preparedRegionFreeBestiary += free;
+
+            if (slot.Name == null) continue;
+            for (var n = free; n < slot.Count; n++) names.Add(slot.Name);
+        }
     }
 
     // Copies cost lines, dropping entries with no name.

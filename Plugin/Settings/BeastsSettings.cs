@@ -27,6 +27,9 @@ public class BeastsSettings : ISettings
     [Menu("Overlays: Exploration Route", "Experimental route through the map that covers all beast spawns.")]
     public ExplorationRouteSettings ExplorationRoute { get; set; } = new();
 
+    [Menu("Overlays: Thread Effects", "Lists the Bestiary Thread count and every beast effect on the current map, with a short description of each.")]
+    public ThreadEffectsSettings ThreadEffects { get; set; } = new() { XPos = new(1, 0, 100), YPos = new(30, 0, 100) };
+
     [Menu("Overlays: Automation Status", "Automation status message shown at the top of the screen while running.")]
     public AutomationStatusOverlaySettings AutomationStatus { get; set; } = new();
 
@@ -425,6 +428,9 @@ public class BestiaryAutomationSettings
     [Menu("Only Itemize Tracked Beasts", "During a regex itemize, skip any beast that isn't on your tracked list even if the in-game search matched it. The Bestiary search also looks at a beast's rare name, mods and recipes, so short regex fragments let untracked beasts through - and those have no price and can't be listed at Faustus. Turn off to itemize everything the search matches.")]
     public ToggleNode OnlyItemizeTrackedBeasts { get; set; } = new(true);
 
+    [Menu("Drop Beasts While Itemizing", "Since 3.30 an itemized beast lands on the cursor instead of in your inventory. On (faster): the next itemize click drops the held beast on the ground, and the plugin closes the panels, switches item labels off with your highlight-toggle key and picks the beasts up where they lie, once your inventory's worth is on the ground. Off: each beast is placed from the cursor into your inventory before the next one. Turn this off once the game sends itemized beasts straight to the inventory again.")]
+    public ToggleNode DropBeastsWhileItemizing { get; set; } = new(true);
+
     [Menu("Auto-Stash After Itemize", "When enabled, itemized beasts are moved to the configured stash tab whenever inventory fills mid-itemize, and once itemizing finishes.")]
     public ToggleNode AutoStashAfterItemize { get; set; } = new(true);
 
@@ -446,10 +452,10 @@ public class BestiaryAutomationSettings
 [Submenu(CollapsedByDefault = true)]
 public class RestockSettings
 {
-    [Menu("Restock Hotkey", "Pull configured targets from stash into inventory. Stash must be open.")]
+    [Menu("Restock Hotkey", "Pull the configured map from stash into inventory. Stash must be open.")]
     public HotkeyNodeV2 RestockHotkey { get; set; } = new(System.Windows.Forms.Keys.None);
 
-    [Menu("Load Map Device Hotkey", "Load the configured map into the open Map Device and check that a Bestiary Thread is set.")]
+    [Menu("Load Map Device Hotkey", "Load the configured map into the open Map Device and set the thread slots as configured below.")]
     public HotkeyNodeV2 LoadMapDeviceHotkey { get; set; } = new(System.Windows.Forms.Keys.None);
 
     [Menu("Selected Atlas Map", "Map to click on the Atlas before loading. 'Keep currently opened map' skips Atlas selection and uses whatever map is already loaded.")]
@@ -473,26 +479,42 @@ public class RestockSettings
     [Menu("Map Regex Pattern", "Pasted into the map-stash search bar before restocking maps. Build one at https://poe.re/#/maps. Restock fails rather than pulling unfiltered if this is empty while the filter is on.")]
     public TextNode MapRegexPattern { get; set; } = new(string.Empty);
 
-    // Target 1 holds the map, since the device fills its map slot from the first match.
-    [Menu("Target 1")] public RestockTargetSettings Target1 { get; set; } = new() { ItemName = new TextNode("Map (Tier 16)") };
-    [Menu("Target 2")] public RestockTargetSettings Target2 { get; set; } = new() { Enabled = new(false) };
-    [Menu("Target 3")] public RestockTargetSettings Target3 { get; set; } = new() { Enabled = new(false) };
-    [Menu("Target 4")] public RestockTargetSettings Target4 { get; set; } = new() { Enabled = new(false) };
-    [Menu("Target 5")] public RestockTargetSettings Target5 { get; set; } = new() { Enabled = new(false) };
-    [Menu("Target 6")] public RestockTargetSettings Target6 { get; set; } = new() { Enabled = new(false) };
+    [Menu("Map Target", "The map Restock pulls from your stash and Load Map Device puts into the device.")]
+    public RestockTargetSettings MapTarget { get; set; } = new() { ItemName = new TextNode("Map (Tier 16)") };
 
-    // 3.30 turned Scarabs into Threads, and the Map Device takes Threads straight from the
-    // stash. Saved Scarab and Thread targets have nothing left to restock, so they go off.
-    public void DisableThreadTargets()
-    {
-        foreach (var target in new[] { Target1, Target2, Target3, Target4, Target5, Target6 })
-        {
-            var name = target?.ItemName.Value ?? string.Empty;
-            if (name.Contains("Scarab", StringComparison.OrdinalIgnoreCase) ||
-                name.Contains("Thread", StringComparison.OrdinalIgnoreCase))
-                target.Enabled.Value = false;
-        }
-    }
+    [Menu("Left Thread Slot", "What Load Map Device sets in the left thread slot of the Map Device.")]
+    public ThreadSlotSettings LeftThreadSlot { get; set; } = new();
+
+    [Menu("Middle Thread Slot", "What Load Map Device sets in the middle thread slot. This is the slot everyone has unlocked.")]
+    public ThreadSlotSettings MiddleThreadSlot { get; set; } = new();
+
+    [Menu("Right Thread Slot", "What Load Map Device sets in the right thread slot of the Map Device.")]
+    public ThreadSlotSettings RightThreadSlot { get; set; } = new();
+}
+
+[Submenu(CollapsedByDefault = true)]
+public class ThreadSlotSettings
+{
+    public const string LeaveAsIs = "Leave as is";
+    public const string Empty = "Empty";
+    public const int MaxCount = 8;
+
+    // Every choice the Thread picker offers, in menu order.
+    public static readonly string[] Choices =
+    [
+        LeaveAsIs, Empty,
+        "Abyss Thread", "Bestiary Thread", "Betrayal Thread", "Blight Thread", "Breach Thread",
+        "Expedition Thread", "Incursion Thread", "Legion Thread", "Ritual Thread", "Ultimatum Thread",
+    ];
+
+    [Menu("Thread", "'Leave as is' never touches this slot. 'Empty' clears it. A thread type is picked in the slot, replacing whatever is there. A locked slot is skipped.")]
+    [JsonIgnore]
+    public CustomNode ThreadPicker { get; set; } = new();
+
+    [JsonProperty] internal TextNode Thread { get; set; } = new(LeaveAsIs);
+
+    [Menu("Count", "How many of this thread each map uses. The game allows at most 8.")]
+    public RangeNode<int> Count { get; set; } = new(MaxCount, 1, MaxCount);
 }
 
 [Submenu(CollapsedByDefault = true)]
@@ -1056,17 +1078,9 @@ public class ExplorationRouteDebugSettings
 [Submenu(CollapsedByDefault = true)]
 public class AnalyticsSettings
 {
-    // Analytics is private for now: it only shows up and runs when this marker file exists.
-    public static readonly bool Unlocked = File.Exists(
-        Path.Combine(Directory.GetCurrentDirectory(), "config", "global", "BeastsV3.dev"));
-
-    // Switches off everything a locked install has no menu for.
-    public void TurnOff()
-    {
-        Enable.Value = false;
-        Web.Enabled.Value = false;
-        Telemetry.ShareAnonymousData.Value = false;
-    }
+    // The 14 Nov 2026 build switched analytics and the dashboard off on every install but the
+    // author's and hid their settings. False until that has been undone once on this install.
+    [JsonProperty] internal bool RestoredAfterLock { get; set; }
 
     [Menu("Enable Analytics", "Master toggle for map-record persistence, autosave, and the analytics overlay. Disable to stop all analytics work.")]
     public ToggleNode Enable { get; set; } = new(true);
@@ -1108,6 +1122,11 @@ public class AnalyticsSettings
 [Submenu(CollapsedByDefault = true)]
 public class TelemetrySettings
 {
+    // Community data sharing is private for now: its settings only show up, and it can only
+    // run, when this marker file exists. Local analytics and the dashboard are for everyone.
+    public static readonly bool Unlocked = File.Exists(
+        Path.Combine(Directory.GetCurrentDirectory(), "config", "global", "BeastsV3.dev"));
+
     [Menu("Enable Sharing",
         "OFF BY DEFAULT. When on, each completed map sends: league, map tier, area name, duration, " +
         "beast counts, which beasts were captured, which map device items were used, and your allocated atlas " +
@@ -1205,6 +1224,28 @@ public class AnalyticsOverlaySettings
 
     [Menu("Background Color")]
     public ColorNode BackgroundColor { get; set; } = new(new Color(0, 0, 0, 180));
+}
+
+public class ThreadEffectsSettings : AnalyticsOverlaySettings
+{
+    public const string Good = "Good";
+    public const string Bad = "Bad";
+    public const string Plain = "Show";
+    public const string Hide = "Hide";
+    public static readonly string[] Modes = [Good, Bad, Plain, Hide];
+
+    [Menu("Good Color", "Color of effects set to Good.")]
+    public ColorNode GoodColor { get; set; } = new(new Color(110, 220, 110, 255));
+
+    [Menu("Bad Color", "Color of effects set to Bad.")]
+    public ColorNode BadColor { get; set; } = new(new Color(235, 95, 95, 255));
+
+    [Menu("Effects", "How each effect is shown: Good and Bad in their colors, Show in the text color, Hide not at all. Effects the plugin does not know yet are always shown.")]
+    [JsonIgnore]
+    public CustomNode EffectPicker { get; set; } = new();
+
+    // Stat name -> mode, only for effects the user changed from the plugin's default.
+    [JsonProperty] internal Dictionary<string, string> EffectModes { get; set; } = new(StringComparer.Ordinal);
 }
 
 [Submenu(CollapsedByDefault = true)]

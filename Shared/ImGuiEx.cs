@@ -35,6 +35,23 @@ public static class ImGuiEx
         items.OrderBy(item => rectSelector(item).Top)
              .ThenBy(item => rectSelector(item).Left);
 
+    // An element's children, read one by one. ExileCore's Element.Children can hand back a
+    // stale list after a popup closes and reopens (seen on the 3.30 thread picker: ten wrong
+    // elements with tooltip-sized rects), while GetChildAtIndex always reads the live ones.
+    public static List<Element> FreshChildren(Element element)
+    {
+        var children = new List<Element>();
+        if (element == null) return children;
+
+        var count = (int)element.ChildCount;
+        for (var i = 0; i < count; i++)
+        {
+            var child = element.GetChildAtIndex(i);
+            if (child != null) children.Add(child);
+        }
+        return children;
+    }
+
     public static Element GetChildAt(Element root, params int[] indices)
     {
         var current = root;

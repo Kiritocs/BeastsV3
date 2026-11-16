@@ -527,8 +527,7 @@ public sealed class Restock
     // Enabled restock targets from settings.
     private List<TargetInfo> EnabledTargets()
     {
-        var r = _settings.Restock;
-        var raw = new[] { r.Target1, r.Target2, r.Target3, r.Target4, r.Target5, r.Target6 };
+        var raw = new[] { _settings.Restock.MapTarget };
 
         var result = new List<TargetInfo>();
         foreach (var t in raw)

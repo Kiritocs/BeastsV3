@@ -12,6 +12,7 @@ using BeastsV3.Plugin.Settings;
 using BeastsV3.Prices;
 using BeastsV3.Shared;
 using ExileCore;
+using ExileCore.PoEMemory;
 using ExileCore.PoEMemory.Components;
 using ExileCore.PoEMemory.Elements.InventoryElements;
 using SharpVec2 = SharpDX.Vector2;
@@ -19,14 +20,14 @@ using SharpVec2 = SharpDX.Vector2;
 namespace BeastsV3.Automation.Workflows;
 
 // Loads the configured map into the Map Device. Threads are not loaded: since 3.30 they are
-// set on the device's thread slots and remembered, so this only checks that one is set.
+// set on the device's thread slots and remembered; this sets them only when asked to.
 //
 // Flow:
 //   1. Open the Map Device, walking to it if needed.
 //   2. Select the configured Atlas map, if any.
 //   3. Clear non-target items out of the device.
 //   4. Ctrl-click the map in from storage or inventory.
-//   5. Verify the map is loaded and a Bestiary Thread is set; stop otherwise.
+//   5. Verify the map is loaded, then set the thread slots as configured.
 //   6. Capture the prepared cost breakdown and move the cursor to Activate.
 public sealed class MapDeviceLoad
 {
@@ -151,13 +152,15 @@ public sealed class MapDeviceLoad
                 $"Map Device could not be filled: {summary}. Restock those and load again.");
         }
 
-        // Without a Bestiary Thread the map has no beasts, so a run would be wasted.
-        if (!MapDeviceUi.ReadThreads(_mapDevice.Window).Any(t => t.Name == BestiaryThreadName))
-        {
-            throw new MapSupplyExhaustedException(
-                $"The Map Device has no {BestiaryThreadName} set. Click a thread slot, pick it and set the count; " +
-                "the device remembers it for later maps.");
-        }
+        await RevealThreadNamesAsync(ct);
+
+        await ApplyThreadSlotsAsync(ct);
+
+        // Again after the slots were set: changing a slot can drop its tooltip, and a thread
+        // without a name is left out of the map cost.
+        await RevealThreadNamesAsync(ct);
+        Log.Debug("Threads in the Map Device after load: " + string.Join(", ",
+            MapDeviceUi.ReadThreads(_mapDevice.Window).Select(t => $"{t.Name ?? "?"} x{t.Count}")));
 
         // Records the prepared cost breakdown for the upcoming map.
         CaptureCostBreakdown();
@@ -166,12 +169,268 @@ public sealed class MapDeviceLoad
         _runner.UpdateStatus($"Map Device loaded. {loadedTotal} item{ImGuiEx.PluralSuffix(loadedTotal)} placed. Cursor on Activate.");
     }
 
+    // ---- thread slots -------------------------------------------------
+
+    private static readonly string[] ThreadSlotLabels = ["Left", "Middle", "Right"];
+
+    // Clicks allowed while stepping the count: 1 to 8 is seven steps, plus room for missed ones.
+    private const int MaxThreadCountClicks = 16;
+    private const int ThreadCountChangeTimeoutMs = 600;
+    private const int ThreadPickerTimeoutMs = 1000;
+    private const int PickerTooltipTimeoutMs = 400;
+
+    // Pause after each count click. Two clicks 35 ms apart on the same button were seen to
+    // register as one.
+    private const int ThreadCountClickGapMs = 120;
+
+    private MapDeviceUi.ThreadSlot ThreadSlotAt(int index)
+    {
+        var slots = MapDeviceUi.ReadThreadSlots(_mapDevice.Window);
+        if (slots.Count != ThreadSlotLabels.Length)
+            throw new InvalidOperationException(
+                $"Expected {ThreadSlotLabels.Length} thread slots in the Map Device but found {slots.Count}.");
+        return slots[index];
+    }
+
+    // Makes each thread slot match its setting. 'Leave as is' slots are never touched and
+    // locked slots are skipped.
+    private async Task ApplyThreadSlotsAsync(CancellationToken ct)
+    {
+        var restock = _settings.Restock;
+        var wanted = new[] { restock.LeftThreadSlot, restock.MiddleThreadSlot, restock.RightThreadSlot };
+
+        for (var index = 0; index < wanted.Length; index++)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var choice = wanted[index].Thread.Value;
+            if (string.IsNullOrWhiteSpace(choice) || choice == ThreadSlotSettings.LeaveAsIs) continue;
+
+            var slot = ThreadSlotAt(index);
+            if (slot.State == MapDeviceUi.ThreadSlotState.Locked)
+            {
+                Log.Info($"{ThreadSlotLabels[index]} thread slot is locked; its setting '{choice}' is skipped.");
+                continue;
+            }
+
+            if (choice == ThreadSlotSettings.Empty)
+            {
+                if (slot.State == MapDeviceUi.ThreadSlotState.Picked) await PickInThreadSlotAsync(index, null, ct);
+                continue;
+            }
+
+            if (slot.State != MapDeviceUi.ThreadSlotState.Picked || slot.Name != choice)
+                await PickInThreadSlotAsync(index, choice, ct);
+
+            await SetThreadCountAsync(index, wanted[index].Count.Value, ct);
+        }
+    }
+
+    // Hovers each picked thread slot whose name is still unknown, so its tooltip gets built.
+    // Without this a slot set in an earlier session reads as "some thread, count 8".
+    private async Task RevealThreadNamesAsync(CancellationToken ct)
+    {
+        foreach (var thread in MapDeviceUi.ReadThreads(_mapDevice.Window).Where(t => t.Name == null))
+        {
+            ct.ThrowIfCancellationRequested();
+
+            await _input.MoveCursorToAsync(thread.Slot.GetClientRect());
+            await _waits.WaitForAsync(
+                () => MapDeviceUi.ThreadName(thread.Slot) != null,
+                timeoutMs: PickerTooltipTimeoutMs,
+                pollDelayMs: _settings.Timing.Polling.FastPollDelayMs.Value);
+        }
+    }
+
+    // The open picker's cells when it belongs to `slot`, else an empty list. The picker opens
+    // beside the slot it was opened from, which is what tells it from another slot's picker.
+    private List<Element> PickerCellsFor(MapDeviceUi.ThreadSlot slot)
+    {
+        var cells = _mapDevice.ThreadPickerCells();
+        if (cells.Count == 0) return cells;
+
+        var slotRect = slot.Slot.GetClientRect();
+        var left = cells.Min(c => c.GetClientRect().X);
+        var top = cells.Min(c => c.GetClientRect().Y);
+
+        var beside = left >= slotRect.Left && left <= slotRect.Right + 40f &&
+                     top >= slotRect.Top - 40f && top <= slotRect.Bottom;
+        return beside ? cells : new List<Element>();
+    }
+
+    // Opens the picker for a slot. A click on a slot whose picker is already open closes it,
+    // so a second click is allowed for.
+    private async Task<List<Element>> OpenThreadPickerAsync(int index, CancellationToken ct)
+    {
+        var timing = _settings.Timing;
+
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var slot = ThreadSlotAt(index);
+            var cells = PickerCellsFor(slot);
+            if (cells.Count > 0) return cells;
+
+            await _input.ClickAtAsync(
+                ThreadSlotHitRect(slot.Slot),
+                MouseButtons.Left,
+                preDelayMs: timing.Clicks.UiClickPreDelayMs.Value,
+                postDelayMs: timing.Polling.FastPollDelayMs.Value);
+
+            await _waits.WaitForAsync(
+                () => PickerCellsFor(ThreadSlotAt(index)).Count > 0,
+                timeoutMs: ThreadPickerTimeoutMs,
+                pollDelayMs: timing.Polling.FastPollDelayMs.Value);
+        }
+
+        var open = PickerCellsFor(ThreadSlotAt(index));
+        if (open.Count == 0)
+            throw new InvalidOperationException(
+                $"The thread picker did not open for the {ThreadSlotLabels[index]} thread slot.");
+        return open;
+    }
+
+    // Picks `threadName` in a slot through its picker, or clears the slot when it is null. A
+    // cell is known by its tooltip, which the game only builds once the cell is hovered: cells
+    // that already carry one are checked first, the rest are hovered one at a time.
+    private async Task PickInThreadSlotAsync(int index, string threadName, CancellationToken ct)
+    {
+        var label = ThreadSlotLabels[index];
+        var what = threadName ?? "nothing";
+        _runner.UpdateStatus($"Setting the {label} thread slot to {what}...");
+        var timing = _settings.Timing;
+
+        var cells = (await OpenThreadPickerAsync(index, ct))
+            .OrderBy(c => MapDeviceUi.PickerCellThreadName(c) == null)
+            .ToList();
+
+        var firstCell = cells[0].GetClientRect();
+        Log.Debug($"Thread picker ({label} slot): {cells.Count} cells of {firstCell.Width:0}x{firstCell.Height:0}, known: " +
+                  string.Join(", ", cells.Select(c => MapDeviceUi.PickerCellThreadName(c) ?? "?")));
+
+        Element target = null;
+        foreach (var cell in cells)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (MapDeviceUi.PickerCellThreadName(cell) == null)
+            {
+                await _input.MoveCursorToAsync(cell.GetClientRect());
+                await _waits.WaitForAsync(
+                    () => MapDeviceUi.PickerCellThreadName(cell) != null,
+                    timeoutMs: PickerTooltipTimeoutMs,
+                    pollDelayMs: timing.Polling.FastPollDelayMs.Value);
+            }
+
+            // The clear cell is the one that is not a thread.
+            var name = MapDeviceUi.PickerCellThreadName(cell);
+            var isThread = name?.EndsWith("Thread", StringComparison.OrdinalIgnoreCase) == true;
+            if (threadName == null ? !isThread : name == threadName)
+            {
+                target = cell;
+                break;
+            }
+        }
+
+        if (target == null)
+            throw new MapSupplyExhaustedException(threadName == null
+                ? $"The thread picker for the {label} slot shows no clear button."
+                : $"The thread picker lists no {threadName}. It only shows thread types you own.");
+
+        await _input.ClickAtAsync(
+            target.GetClientRect(),
+            MouseButtons.Left,
+            preDelayMs: timing.Clicks.UiClickPreDelayMs.Value,
+            postDelayMs: timing.Polling.FastPollDelayMs.Value);
+
+        // The picker closes once the slot has taken the choice.
+        await _waits.WaitForAsync(
+            () => _mapDevice.ThreadPickerCells().Count == 0,
+            timeoutMs: ThreadPickerTimeoutMs,
+            pollDelayMs: timing.Polling.FastPollDelayMs.Value);
+
+        await RevealThreadNamesAsync(ct);
+
+        var after = ThreadSlotAt(index);
+        var ok = threadName == null
+            ? after.State == MapDeviceUi.ThreadSlotState.Empty
+            : after.State == MapDeviceUi.ThreadSlotState.Picked && after.Name == threadName;
+        if (!ok)
+            throw new InvalidOperationException(
+                $"The {label} thread slot should hold {what} but shows " +
+                $"{(after.State == MapDeviceUi.ThreadSlotState.Picked ? after.Name ?? "an unnamed thread" : after.State.ToString().ToLowerInvariant())}.");
+    }
+
+    // Steps a picked slot's count to `wanted` with its minus and plus buttons.
+    private async Task SetThreadCountAsync(int index, int wanted, CancellationToken ct)
+    {
+        var timing = _settings.Timing;
+        var misses = 0;
+
+        for (var click = 0; click < MaxThreadCountClicks; click++)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var slot = ThreadSlotAt(index);
+            if (slot.State != MapDeviceUi.ThreadSlotState.Picked || slot.Count == wanted) return;
+
+            _runner.UpdateStatus(
+                $"Setting {slot.Name ?? "thread"} in the {ThreadSlotLabels[index]} slot to {wanted} ({slot.Count} now)...");
+            var before = slot.Count;
+            await _input.ClickAtAsync(
+                ThreadButtonHitRect(slot.Count < wanted ? slot.Plus : slot.Minus),
+                MouseButtons.Left,
+                preDelayMs: timing.Clicks.UiClickPreDelayMs.Value,
+                postDelayMs: ThreadCountClickGapMs);
+
+            var changed = await _waits.WaitForAsync(
+                () => ThreadSlotAt(index).Count != before,
+                timeoutMs: ThreadCountChangeTimeoutMs,
+                pollDelayMs: timing.Polling.FastPollDelayMs.Value);
+
+            if (changed)
+            {
+                misses = 0;
+                continue;
+            }
+
+            // One click can be dropped; three in a row means the count really will not move.
+            if (++misses >= 3)
+                throw new MapSupplyExhaustedException(
+                    $"{slot.Name ?? "Thread"} count stays at {before} and will not go to {wanted}. " +
+                    "Check that you own enough of that thread.");
+        }
+    }
+
+    // Where to click a count button: the lower middle of its element. The element reaches
+    // above the drawn button, and a click near its top edge missed.
+    private static SharpDX.RectangleF ThreadButtonHitRect(Element button)
+    {
+        var rect = button.GetClientRect();
+        return new SharpDX.RectangleF(
+            rect.X + (rect.Width * 0.25f),
+            rect.Y + (rect.Height * 0.5f),
+            rect.Width * 0.5f,
+            rect.Height * 0.4f);
+    }
+
+    // Where to click a slot to open its picker: the middle of its upper half, clear of the
+    // count buttons along its bottom edge.
+    private static SharpDX.RectangleF ThreadSlotHitRect(Element slot)
+    {
+        var rect = slot.GetClientRect();
+        return new SharpDX.RectangleF(
+            rect.X + (rect.Width * 0.35f),
+            rect.Y + (rect.Height * 0.25f),
+            rect.Width * 0.3f,
+            rect.Height * 0.3f);
+    }
+
     // ---- clearing non-targets ------------------------------------------
 
     // Ctrl-clicks non-target items out of the device. Slot kinds with no configured target
     // are left untouched.
-    private const string BestiaryThreadName = "Bestiary Thread";
-
     private async Task ClearNonTargetItemsAsync(List<TargetInfo> targets, CancellationToken ct)
     {
         if (!_settings.Restock.ClearNonTargetMapDeviceItems.Value) return;
@@ -600,11 +859,11 @@ public sealed class MapDeviceLoad
             breakdown.Add(new MapCostItem { ItemName = name, UnitPriceChaos = chaos });
         }
 
-        foreach (var (name, count) in MapDeviceUi.ReadThreads(_mapDevice.Window))
+        foreach (var thread in MapDeviceUi.ReadThreads(_mapDevice.Window).Where(t => t.Name != null))
         {
-            _prices.TryGetItemPriceChaos(name, out var chaos);
-            for (var i = 0; i < count; i++)
-                breakdown.Add(new MapCostItem { ItemName = name, UnitPriceChaos = chaos });
+            _prices.TryGetItemPriceChaos(thread.Name, out var chaos);
+            for (var i = 0; i < thread.Count; i++)
+                breakdown.Add(new MapCostItem { ItemName = thread.Name, UnitPriceChaos = chaos });
         }
 
         _cost.SetPrepared(breakdown);
@@ -856,8 +1115,7 @@ public sealed class MapDeviceLoad
     // Enabled restock targets, with map targets reduced to one per device slot.
     private List<TargetInfo> EnabledTargets()
     {
-        var r = _settings.Restock;
-        var raw = new[] { r.Target1, r.Target2, r.Target3, r.Target4, r.Target5, r.Target6 };
+        var raw = new[] { _settings.Restock.MapTarget };
 
         var result = new List<TargetInfo>();
         foreach (var t in raw)

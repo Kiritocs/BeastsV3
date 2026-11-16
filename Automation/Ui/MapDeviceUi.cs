@@ -166,29 +166,160 @@ public sealed class MapDeviceUi
     // Levels walked below the device window; a thread's count text sits seven down.
     private const int MaxThreadDepth = 8;
 
-    // The Threads the device will spend on the next map: each selected thread and its count.
-    // Since 3.30 a thread is not an item in a slot. Its slot shows the thread as a tooltip and
-    // the count as a number, so both are found by walking the window, not by child index.
-    public static List<(string Name, int Count)> ReadThreads(Element window)
+    public enum ThreadSlotState { Locked, Empty, Picked }
+
+    // One of the device's thread slots. Slot is the element to click or hover. For a picked
+    // slot, Count is the per-map count you pay for (free threads from the atlas are not in it) and Minus and Plus are the buttons that change it; Name
+    // is the thread, or null until the slot has been hovered once - the name exists only in a
+    // tooltip the game builds on first hover.
+    public sealed record ThreadSlot(
+        ThreadSlotState State, string Name, int Count, Element Slot, Element Minus, Element Plus)
     {
-        var threads = new List<(string Name, int Count)>();
-        CollectThreads(window, 0, threads);
-        return threads;
+        // True when the count cannot go lower: the game greys the minus button out. That only
+        // happens on a map in a Shaped Region, where the count then is the region's free
+        // threads. On any other map minus stays live at 1 and clears the slot.
+        public bool AtMinimum => State == ThreadSlotState.Picked && Minus is { IsSaturated: false };
     }
 
-    private static void CollectThreads(Element element, int depth, List<(string Name, int Count)> into)
+    // The device's thread slots, left to right. Since 3.30 a thread is not an item in a slot,
+    // so the slots are found by what each state shows: a count above two buttons when picked,
+    // a "Select a [Thread] type" tooltip when empty, an "... to unlock" tooltip when locked.
+    public static List<ThreadSlot> ReadThreadSlots(Element window)
+    {
+        var slots = new List<ThreadSlot>();
+        CollectThreadSlots(window, 0, slots);
+        return slots.OrderBy(s => s.Slot.GetClientRect().X).ToList();
+    }
+
+    // The slots with a thread picked.
+    public static List<ThreadSlot> ReadThreads(Element window) =>
+        ReadThreadSlots(window).Where(s => s.State == ThreadSlotState.Picked).ToList();
+
+    // The thread named by a slot's tooltip, or null while the tooltip is not built.
+    public static string ThreadName(Element slot) => FirstText(slot?.Tooltip, 2);
+
+    // A slot's count reads "4", or "4+2" when the atlas adds free threads on top. Only the
+    // part before the plus is taken from the stash and changed by the buttons.
+    private static bool TryReadPaidCount(string text, out int count)
+    {
+        count = 0;
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        var plus = text.IndexOf('+');
+        var paid = plus >= 0 ? text[..plus] : text;
+        return int.TryParse(paid.Trim(), out count) && count > 0;
+    }
+
+    private static void CollectThreadSlots(Element element, int depth, List<ThreadSlot> into)
     {
         if (element == null || !element.IsVisibleLocal || depth > MaxThreadDepth) return;
 
-        var name = FirstText(element.Tooltip, 2);
-        if (name != null && name.EndsWith("Thread", StringComparison.OrdinalIgnoreCase) &&
-            int.TryParse(FirstText(element, 3), out var count) && count > 0)
+        if (element.ChildCount == 0 && TryReadPaidCount(element.Text, out var count))
         {
-            into.Add((name, count));
+            // The count sits two levels inside the slot; the slot's small leaf siblings are its
+            // buttons. A number without that pair around it is not a thread count.
+            var slot = element.Parent?.Parent;
+            if (slot == null) return;
+
+            var slotRect = slot.GetClientRect();
+            var buttons = ImGuiEx.FreshChildren(slot.Parent)
+                .Where(e => e.Address != slot.Address && e.IsVisibleLocal && e.ChildCount == 0 &&
+                            e.GetClientRect().Width < slotRect.Width / 2)
+                .OrderBy(e => e.GetClientRect().X)
+                .ToList();
+
+            if (buttons.Count == 2)
+                into.Add(new ThreadSlot(ThreadSlotState.Picked, ThreadName(slot), count, slot, buttons[0], buttons[1]));
             return;
         }
 
-        foreach (var child in element.Children) CollectThreads(child, depth + 1, into);
+        var tooltip = FirstText(element.Tooltip, 2);
+        if (tooltip != null && tooltip.StartsWith("Select a", StringComparison.OrdinalIgnoreCase))
+        {
+            into.Add(new ThreadSlot(ThreadSlotState.Empty, null, 0, element, null, null));
+            return;
+        }
+        // Locked by atlas progress, or closed by the Unwavering Vision keystone ("Can only use
+        // one type of thread ..."). Either way the slot cannot be used.
+        if (tooltip != null && (tooltip.Contains("to unlock", StringComparison.OrdinalIgnoreCase) ||
+                                tooltip.Contains("one type of thread", StringComparison.OrdinalIgnoreCase)))
+        {
+            into.Add(new ThreadSlot(ThreadSlotState.Locked, null, 0, element, null, null));
+            return;
+        }
+
+        foreach (var child in ImGuiEx.FreshChildren(element)) CollectThreadSlots(child, depth + 1, into);
+    }
+
+    // ---- thread picker ---------------------------------------------------
+
+    // The open picker's cells - one per thread type you own, plus a clear cell when the slot
+    // holds a thread - or an empty list while it is closed. The picker is a top-level panel of its own, not part of the device window. It is
+    // told from other panels by its grid of equal squares, at least one showing an owned count.
+    public List<Element> ThreadPickerCells()
+    {
+        foreach (var panel in VisiblePanels())
+        {
+            var cells = SquareGrid(panel);
+            if (cells.Count >= 2 && cells.Any(c => HasNumberText(c, 2))) return cells;
+        }
+        return new List<Element>();
+    }
+
+    // The thread a picker cell stands for. Null until the cell has been hovered once: the game
+    // only builds a cell's tooltip then.
+    public static string PickerCellThreadName(Element cell)
+    {
+        if (cell == null) return null;
+
+        foreach (var element in new[] { cell }.Concat(ImGuiEx.FreshChildren(cell)))
+        {
+            var name = FirstText(element?.Tooltip, 4);
+            if (name != null) return name;
+        }
+        return null;
+    }
+
+    private IEnumerable<Element> VisiblePanels() =>
+        ImGuiEx.FreshChildren(_game?.IngameState?.IngameUi).Where(p => p.IsVisibleLocal);
+
+    // The picker's grid inside `root`: the largest group of visible siblings that are all
+    // squares of one size.
+    private static List<Element> SquareGrid(Element root)
+    {
+        var best = new List<Element>();
+        var level = new List<Element> { root };
+
+        for (var depth = 0; depth <= 3 && level.Count > 0; depth++)
+        {
+            foreach (var element in level)
+            {
+                var children = ImGuiEx.FreshChildren(element).Where(c => c.IsVisibleLocal).ToList();
+                if (children.Count > best.Count && AreEqualSquares(children)) best = children;
+            }
+            level = level.SelectMany(ImGuiEx.FreshChildren).Where(c => c.IsVisibleLocal).ToList();
+        }
+        return best;
+    }
+
+    private static bool AreEqualSquares(List<Element> elements)
+    {
+        var first = elements[0].GetClientRect();
+        if (first.Width < 20f || Math.Abs(first.Width - first.Height) > 2f) return false;
+
+        return elements.All(e =>
+        {
+            var rect = e.GetClientRect();
+            return Math.Abs(rect.Width - first.Width) <= 2f && Math.Abs(rect.Height - first.Height) <= 2f;
+        });
+    }
+
+    // True when the element or a descendant shows a whole number. A picker cell's own text is
+    // unreadable noise, so the first text found is not enough; its count sits two levels down.
+    private static bool HasNumberText(Element element, int maxDepth)
+    {
+        if (element == null) return false;
+        if (int.TryParse(element.Text?.Trim(), out _)) return true;
+        return maxDepth > 0 && ImGuiEx.FreshChildren(element).Any(c => HasNumberText(c, maxDepth - 1));
     }
 
     // First non-empty text of an element or its descendants, nearest level first.
@@ -203,7 +334,7 @@ public sealed class MapDeviceUi
             {
                 if (!string.IsNullOrWhiteSpace(e?.Text)) return e.Text.Trim();
             }
-            level = level.Where(e => e != null).SelectMany(e => e.Children).ToList();
+            level = level.Where(e => e != null).SelectMany(ImGuiEx.FreshChildren).ToList();
         }
         return null;
     }

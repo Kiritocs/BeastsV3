@@ -79,8 +79,6 @@ public static class MenuTree
             // The master toggle is drawn in the menu header instead.
             if (property.Name == nameof(BeastsSettings.Enable)) continue;
 
-            if (property.Name == nameof(BeastsSettings.Analytics) && !AnalyticsSettings.Unlocked) continue;
-
             var value = TryGetValue(property, settings);
             if (value == null) continue;
 
@@ -164,6 +162,9 @@ public static class MenuTree
 
             var value = TryGetValue(property, instance);
             if (value == null) continue;
+
+            // Community data sharing has no menu on installs it is switched off for.
+            if (value is TelemetrySettings && !TelemetrySettings.Unlocked) continue;
 
             var id = $"{idPrefix}.{property.Name}";
 

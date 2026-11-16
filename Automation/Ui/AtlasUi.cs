@@ -26,7 +26,10 @@ public sealed class AtlasUi
     private const float ScaleChangeEpsilon = 0.005f;
     private const int ScaleSettleTimeoutMs = 250;
     private const int MaxCenterAttempts = 14;
-    private const int AtlasNodeUiOffset = 2;
+    // The map nodes follow a run of atlas-sized layers whose length is not fixed (2 before
+    // 3.30, 12 with ten Shaped Regions), so the first node is found by its size.
+    private const int MaxLeadingLayers = 40;
+    private const float MaxNodeSizePixels = 200f;
     private const int AtlasNodeScanLimit = 110;
 
     // Normalized screen areas covered by the HUD; drag anchors avoid these.
@@ -164,7 +167,8 @@ public sealed class AtlasUi
 
     // ---- map selection ------------------------------------------------
 
-    // Returns the InnerAtlas child index for a map name (AtlasNodes index + 2).
+    // Returns the InnerAtlas child index for a map name: its AtlasNodes index plus the number
+    // of layers in front of the first node.
     public int? TryResolveMapUiIndex(string mapName)
     {
         var lookup = NormalizeMapName(mapName);
@@ -173,6 +177,9 @@ public sealed class AtlasUi
         var nodes = _game?.Files?.AtlasNodes?.EntriesList;
         if (nodes == null || nodes.Count == 0) return null;
 
+        var offset = FirstNodeUiIndex();
+        if (!offset.HasValue) return null;
+
         var limit = Math.Min(nodes.Count, AtlasNodeScanLimit);
         for (var i = 0; i < limit; i++)
         {
@@ -180,8 +187,23 @@ public sealed class AtlasUi
             if (!string.IsNullOrWhiteSpace(nodeName) &&
                 string.Equals(nodeName, lookup, StringComparison.OrdinalIgnoreCase))
             {
-                return i + AtlasNodeUiOffset;
+                return i + offset.Value;
             }
+        }
+        return null;
+    }
+
+    // Index of the first map node among the InnerAtlas children: the first child that is
+    // node-sized, not a layer as large as the whole atlas.
+    private int? FirstNodeUiIndex()
+    {
+        if (InnerAtlas is not Element inner) return null;
+
+        var count = (int)Math.Min(inner.ChildCount, MaxLeadingLayers);
+        for (var i = 0; i < count; i++)
+        {
+            var rect = inner.GetChildAtIndex(i)?.GetClientRect() ?? default;
+            if (rect.Width > 0 && rect.Width < MaxNodeSizePixels) return i;
         }
         return null;
     }

@@ -12,6 +12,7 @@ using BeastsV3.Plugin.Settings;
 using BeastsV3.Shared;
 using ExileCore.PoEMemory;
 using ExileCore.PoEMemory.Elements;
+using ExileCore.PoEMemory.MemoryObjects;
 using Hexa.NET.ImGui;
 using RectangleF = SharpDX.RectangleF;
 using SharpVec2 = SharpDX.Vector2;
@@ -25,6 +26,14 @@ public sealed class Bestiary
     private const int MaxConsecutiveStalls = 6;
     private const int SettleAfterChangeMs = 200;
     private const int PanelWaitTimeoutMs = 2000;
+
+    // How long an itemize click may take to show its beast, on the cursor or in the inventory.
+    private const int ItemizeResultTimeoutMs = 1500;
+
+    // Drop mode: how long the cursor may take to register over a ground beast, and one pickup to land.
+    private const int GroundHoverTimeoutMs = 250;
+    private const int GroundPickupTimeoutMs = 3000;
+    private const int MaxGroundPickupFailures = 3;
 
     // Budget for rows to finish streaming in after the tab opens.
     private const int RowSettleTimeoutMs = 6000;
@@ -66,14 +75,16 @@ public sealed class Bestiary
     private readonly ClipboardAutoPaste _clipboard;
     private readonly CapturedMonsterStash _capturedMonsterStash;
     private readonly HideoutTravel _hideoutTravel;
+    private readonly UiCleanup _uiCleanup;
 
     // Regex to reapply when the panel is reopened after an auto-stash interrupt.
     private string _activeRegexForResume = string.Empty;
 
     public Bestiary(Runner runner, AutomationInput input, Waits waits, BeastsSettings settings,
         BestiaryUi bestiaryUi, InventoryUi inventoryUi, ClipboardAutoPaste clipboard,
-        CapturedMonsterStash capturedMonsterStash, HideoutTravel hideoutTravel)
+        CapturedMonsterStash capturedMonsterStash, HideoutTravel hideoutTravel, UiCleanup uiCleanup)
     {
+        _uiCleanup = uiCleanup;
         _runner = runner;
         _input = input;
         _waits = waits;
@@ -185,8 +196,22 @@ public sealed class Bestiary
         var stallCount = 0;
         var scroll = new ScrollState(MaxScrollsBetweenBatches);
 
+        // Drop mode: beasts itemized but not yet in the inventory (on the ground, one on the
+        // cursor). They count against the free cells, so no more are dropped than fit.
+        var dropMode = !deleteMode && _settings.BestiaryAutomation.DropBeastsWhileItemizing.Value;
+        var onGround = 0;
+
         try
         {
+            // The pickup closes the inventory and the stash step needs it back.
+            if (dropMode && (_settings.Restock.InventoryToggleHotkey?.Value.Key ?? Keys.None) == Keys.None)
+                throw new InvalidOperationException(
+                    "Drop Beasts While Itemizing needs Automation: Restock -> Inventory Toggle Hotkey set to your PoE inventory key.");
+
+            // A beast left on the cursor by an earlier run would be dropped by the first click.
+            if (!deleteMode && _inventoryUi.IsHoldingItem)
+                await PlaceHeldBeastAsync(_inventoryUi.FreeCellCount(), ct);
+
             while (true)
             {
                 ct.ThrowIfCancellationRequested();
@@ -211,6 +236,7 @@ public sealed class Bestiary
 
                 if (scan.Remaining == 0)
                 {
+                    if (onGround > 0) await CollectDroppedBeastsAsync(ct);
                     await FinishAsync(deleteMode, released, autoStashOnFull, skipped, ct);
                     return new ClearResult(released, 0);
                 }
@@ -219,14 +245,32 @@ public sealed class Bestiary
                 if (maxToProcess.HasValue && released >= maxToProcess.Value)
                 {
                     Log.Debug($"Bestiary clear stopping at the {maxToProcess.Value}-beast cap ({scan.Remaining} still matching).");
+                    if (onGround > 0) await CollectDroppedBeastsAsync(ct);
                     return new ClearResult(released, scan.Remaining);
                 }
 
                 // Itemize only: inventory is full.
-                if (!deleteMode && _inventoryUi.FreeCellCount() <= 0)
+                if (!deleteMode && _inventoryUi.FreeCellCount() - onGround <= 0)
                 {
-                    var stopped = await MakeRoomForMoreBeastsAsync(released, scan.Remaining, autoStashOnFull, ct);
-                    if (stopped.HasValue) return stopped.Value;
+                    var collected = onGround > 0;
+                    if (collected)
+                    {
+                        await CollectDroppedBeastsAsync(ct);
+                        onGround = 0;
+                    }
+
+                    if (_inventoryUi.FreeCellCount() <= 0)
+                    {
+                        var stopped = await MakeRoomForMoreBeastsAsync(released, scan.Remaining, autoStashOnFull, ct);
+                        if (stopped.HasValue) return stopped.Value;
+                    }
+                    else if (collected)
+                    {
+                        // Room is left after all, so only the panel the pickup closed has to come back.
+                        _input.PressKeyUp(Keys.LControlKey);
+                        try { await ReopenPanelAndReapplyRegexAsync(ct); }
+                        finally { _input.PressKeyDown(Keys.LControlKey); }
+                    }
                     continue;
                 }
 
@@ -261,7 +305,7 @@ public sealed class Bestiary
                 // Capped to free inventory cells when itemizing, and to whatever the caller's cap has left.
                 var batchSize = deleteMode
                     ? scan.Rows.Count
-                    : Math.Min(scan.Rows.Count, Math.Max(0, _inventoryUi.FreeCellCount()));
+                    : Math.Min(scan.Rows.Count, Math.Max(0, _inventoryUi.FreeCellCount() - onGround));
                 if (maxToProcess.HasValue)
                     batchSize = Math.Min(batchSize, Math.Max(0, maxToProcess.Value - released));
                 if (batchSize <= 0) continue;
@@ -275,6 +319,7 @@ public sealed class Bestiary
                 var clickSw = Stopwatch.StartNew();
                 var clicked = await ClickBatchAsync(scan, batchSize, deleteMode, eligible, ct);
                 clickSw.Stop();
+                if (dropMode) onGround += clicked;
 
                 if (clicked == 0)
                 {
@@ -286,7 +331,7 @@ public sealed class Bestiary
 
                 var waitStats = new WaitStats();
                 var releasedThisBatch = await WaitForReleaseAsync(
-                    startingRemaining, startingFree, clicked, deleteMode, eligible, ct, waitStats);
+                    startingRemaining, startingFree, clicked, deleteMode || dropMode, eligible, ct, waitStats);
 
                 var recheckMs = 0L;
                 if (releasedThisBatch <= 0)
@@ -518,7 +563,12 @@ public sealed class Bestiary
         // row counts as untracked - at worst one beast left behind, instead of a wasted slot.
         return beast =>
         {
-            if (!TryReadName(beast, out var trimmed)) return false;
+            if (!TryReadName(beast, out var trimmed))
+            {
+                // Shown in the skipped list, so "nothing matched" is not the only trace of it.
+                skipped.Add("(name unreadable)");
+                return false;
+            }
 
             if (IsTrackedName(tracked, trimmed)) return true;
 
@@ -548,7 +598,10 @@ public sealed class Bestiary
         trimmed = null;
         try
         {
+            // ExileCore's own name came back empty for every row in 3.30, so the tooltip's
+            // name line is the fallback.
             var name = beast?.Name;
+            if (string.IsNullOrWhiteSpace(name)) name = BestiaryUi.BeastDisplayName(beast);
             if (string.IsNullOrWhiteSpace(name)) return false;
             trimmed = name.Trim();
             return true;
@@ -662,12 +715,18 @@ public sealed class Bestiary
 
         if (!deleteMode)
         {
+            var freeBefore = _inventoryUi.FreeCellCount();
+
             // Ctrl is already held; clicking the row body itemizes it.
             await _input.ClickAtAsync(
                 rect,
                 MouseButtons.Left,
                 preDelayMs: timing.Clicks.BestiaryItemizePreDelayMs.Value,
                 postDelayMs: Math.Max(timing.Clicks.BestiaryItemizePostDelayMs.Value, floor));
+
+            // Drop mode leaves the beast on the cursor: the next itemize click drops it.
+            if (!_settings.BestiaryAutomation.DropBeastsWhileItemizing.Value)
+                await PlaceHeldBeastAsync(freeBefore, ct);
             return true;
         }
 
@@ -700,6 +759,221 @@ public sealed class Bestiary
         // Clears the dialog if it appeared anyway.
         await TryDismissDestroyConfirmationAsync(ct);
         return true;
+    }
+
+    // Since 3.30 an itemized beast lands on the mouse cursor, not in the inventory. This puts
+    // it into a free inventory cell before the next row is clicked, because a second itemize
+    // click would drop the held beast on the ground. Ctrl stays held; the game places the item
+    // all the same. Does nothing when the beast went straight to the inventory.
+    private async Task PlaceHeldBeastAsync(int freeBefore, CancellationToken ct)
+    {
+        var timing = _settings.Timing;
+        var poll = Math.Max(5, timing.Polling.FastPollDelayMs.Value);
+
+        await _waits.WaitForAsync(
+            () => _inventoryUi.IsHoldingItem || _inventoryUi.FreeCellCount() < freeBefore,
+            timeoutMs: ItemizeResultTimeoutMs,
+            pollDelayMs: poll);
+
+        if (!_inventoryUi.IsHoldingItem) return;
+        ct.ThrowIfCancellationRequested();
+
+        await OpenInventoryIfClosedAsync();
+
+        if (!_inventoryUi.TryGetFreeCellCenter(out var cell))
+            throw new InvalidOperationException(
+                "An itemized beast is on the cursor but no free inventory cell was found. Place it by hand.");
+
+        await _input.ClickAtAsync(
+            cell,
+            MouseButtons.Left,
+            preDelayMs: timing.Clicks.UiClickPreDelayMs.Value,
+            postDelayMs: timing.Polling.FastPollDelayMs.Value);
+
+        var placed = await _waits.WaitForAsync(
+            () => !_inventoryUi.IsHoldingItem && _inventoryUi.FreeCellCount() < freeBefore,
+            timeoutMs: PanelWaitTimeoutMs,
+            pollDelayMs: poll);
+
+        if (!placed)
+            throw new InvalidOperationException(
+                "An itemized beast is still on the cursor after clicking a free inventory cell. " +
+                "Place it by hand; clicking another beast would drop it on the ground.");
+    }
+
+    // Drop mode: brings every beast itemized since the last collection into the inventory. The
+    // one still on the cursor is placed first. The rest lie in one pile at the character's
+    // feet, where their labels stack far past the screen edge, so the labels are switched off
+    // and each beast is clicked where it lies instead.
+    private async Task CollectDroppedBeastsAsync(CancellationToken ct)
+    {
+        _runner.UpdateStatus("Picking up itemized beasts...");
+        var timing = _settings.Timing;
+        var poll = Math.Max(5, timing.Polling.FastPollDelayMs.Value);
+
+        await PlaceHeldBeastAsync(_inventoryUi.FreeCellCount(), ct);
+
+        var inventoryWasOpen = _inventoryUi.IsVisible;
+        var picked = 0;
+
+        // Let go for the pickup: a plain click is the known way to pick an item up.
+        _input.PressKeyUp(Keys.LControlKey);
+        try
+        {
+            await _uiCleanup.PrepareAsync("picking up itemized beasts", new UiCleanupOptions());
+
+            await SetGroundLabelsAsync(on: false);
+
+            var failures = 0;
+            while (true)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                var beasts = _inventoryUi.GroundCapturedMonsters();
+                if (beasts.Count == 0) break;
+
+                var free = _inventoryUi.FreeCellCount();
+                if (free <= 0)
+                {
+                    Log.Info($"{beasts.Count} itemized beast{ImGuiEx.PluralSuffix(beasts.Count)} stay on the ground: the inventory is full.");
+                    break;
+                }
+
+                if (await ClickGroundBeastAsync(beasts[0]) &&
+                    await _waits.WaitForAsync(
+                        () => _inventoryUi.FreeCellCount() < free,
+                        timeoutMs: GroundPickupTimeoutMs,
+                        pollDelayMs: poll))
+                {
+                    picked++;
+                    failures = 0;
+                }
+                else if (++failures >= MaxGroundPickupFailures)
+                {
+                    throw new InvalidOperationException(
+                        $"Could not pick up an itemized beast from the ground ({beasts.Count} still there after " +
+                        $"{picked} picked up). Pick them up by hand.");
+                }
+            }
+        }
+        finally
+        {
+            // Always back on, whatever they were before: the stash and Einhar are found by
+            // their labels. Not allowed to hide the error that ended the pickup.
+            try
+            {
+                // Off the pile first, so no hovered label is mistaken for "labels are on".
+                await _input.MoveCursorToAsync(new SharpVec2(_input.CursorPosition.X, Math.Max(40f, _input.CursorPosition.Y - 300f)));
+                await SetGroundLabelsAsync(on: true);
+            }
+            catch (Exception ex) { Log.Info($"Ground labels were not switched back on: {ex.Message}"); }
+
+            _input.PressKeyDown(Keys.LControlKey);
+        }
+
+        Log.Debug($"Picked up {picked} itemized beast{ImGuiEx.PluralSuffix(picked)} from the ground.");
+
+        // Back as it was: the stash step reads the inventory panel.
+        var toggle = _settings.Restock.InventoryToggleHotkey?.Value.Key ?? Keys.None;
+        if (inventoryWasOpen && toggle != Keys.None) await OpenInventoryIfClosedAsync();
+    }
+
+    // Switches ground labels on or off with the player's own highlight-toggle key. Does
+    // nothing when they already are that way.
+    private async Task SetGroundLabelsAsync(bool on)
+    {
+        var now = _inventoryUi.AreGroundLabelsOn;
+        Log.Debug($"Ground labels wanted {(on ? "on" : "off")}: labels read {now?.ToString() ?? "unknown"}, " +
+                  $"game option reads {_inventoryUi.AlwaysHighlightOption?.ToString() ?? "unknown"}.");
+        if (now == on) return;
+
+        var wanted = on ? "on" : "off";
+        if (now == null)
+            throw new InvalidOperationException(
+                $"Could not tell whether ground labels are on. Switch them {wanted} yourself.");
+
+        if (_inventoryUi.HighlightToggleKey == Keys.None)
+            throw new InvalidOperationException(
+                $"The game's highlight-toggle key could not be read. Bind 'Toggle Highlighting' in the PoE options, or switch ground labels {wanted} yourself.");
+
+        await TapHighlightToggleAsync();
+
+        var done = await _waits.WaitForAsync(
+            () => _inventoryUi.AreGroundLabelsOn == on,
+            timeoutMs: PanelWaitTimeoutMs,
+            pollDelayMs: Math.Max(5, _settings.Timing.Polling.FastPollDelayMs.Value));
+
+        if (!done)
+            throw new InvalidOperationException(
+                $"Ground labels did not switch {wanted} after pressing the highlight-toggle key '{_inventoryUi.HighlightToggleKey}'.");
+    }
+
+    private Task TapHighlightToggleAsync() =>
+        _input.TapKeyAsync(_inventoryUi.HighlightToggleKey,
+            downHoldMs: _settings.Timing.Clicks.KeyTapDelayMs.Value,
+            postDelayMs: _settings.Timing.Polling.UiCheckInitialSettleDelayMs.Value);
+
+    // Offsets tried around a beast's spot until the game reports the cursor over it.
+    private static readonly SharpVec2[] GroundHoverOffsets =
+        [new(0, 0), new(0, -14), new(14, 0), new(-14, 0), new(0, 14)];
+
+    // Moves onto a beast lying on the ground and clicks once the game shows the cursor is over
+    // an itemized beast. False when no spot gave that hover, so nothing else gets clicked.
+    private async Task<bool> ClickGroundBeastAsync(Entity beast)
+    {
+        var timing = _settings.Timing;
+        var spot = _inventoryUi.ScreenPositionOf(beast);
+        if (!spot.HasValue) return false;
+
+        foreach (var offset in GroundHoverOffsets)
+        {
+            await _input.MoveCursorToAsync(spot.Value + offset);
+
+            var hovering = await _waits.WaitForAsync(
+                () => _inventoryUi.IsHoveringGroundCapturedMonster,
+                timeoutMs: GroundHoverTimeoutMs,
+                pollDelayMs: Math.Max(5, timing.Polling.FastPollDelayMs.Value));
+            if (!hovering) continue;
+
+            await _input.ClickAsync(
+                MouseButtons.Left,
+                preDelayMs: timing.Clicks.UiClickPreDelayMs.Value,
+                postDelayMs: timing.Polling.FastPollDelayMs.Value);
+            return true;
+        }
+        return false;
+    }
+
+    // The inventory has to be showing to click one of its cells. Ctrl is let go for the hotkey
+    // only, since the game may not read Ctrl+key as the inventory key.
+    private async Task OpenInventoryIfClosedAsync()
+    {
+        if (_inventoryUi.IsVisible) return;
+
+        var toggle = _settings.Restock.InventoryToggleHotkey?.Value.Key ?? Keys.None;
+        if (toggle == Keys.None)
+            throw new InvalidOperationException(
+                "An itemized beast is on the cursor and the inventory is closed. Open the inventory, or set " +
+                "Automation: Restock -> Inventory Toggle Hotkey so the plugin can open it.");
+
+        var timing = _settings.Timing;
+        _input.PressKeyUp(Keys.LControlKey);
+        try
+        {
+            await _input.TapKeyAsync(toggle, timing.Clicks.KeyTapDelayMs.Value, timing.Polling.FastPollDelayMs.Value);
+            await _waits.WaitForAsync(
+                () => _inventoryUi.IsVisible,
+                timeoutMs: PanelWaitTimeoutMs,
+                pollDelayMs: Math.Max(5, timing.Polling.FastPollDelayMs.Value));
+        }
+        finally
+        {
+            _input.PressKeyDown(Keys.LControlKey);
+        }
+
+        if (!_inventoryUi.IsVisible)
+            throw new InvalidOperationException(
+                $"An itemized beast is on the cursor and the inventory did not open with '{toggle}'. Place it by hand.");
     }
 
     // Dismisses the destroy-confirmation dialog; false when none was present.
@@ -1025,11 +1299,11 @@ public sealed class Bestiary
         throw new InvalidOperationException(
             $"Bestiary regex did not take effect after 3 attempts (field reads '{_bestiaryUi.FilterText}', " +
             $"all {_bestiaryUi.TotalBeastCount()} beasts still match and the filter did not cull rows when " +
-            $"probed with '{FilterLivenessProbe}'). Check that Ctrl+F focuses the beast filter in-game.");
+            $"probed with '{FilterLivenessProbe}'). The click on the filter field did not put the cursor in it.");
     }
 
-    // Pastes text into the beast filter and commits with Enter. False when it never landed,
-    // so the caller can retry without having sent a stray Enter.
+    // Pastes text into the beast filter. False when it never landed, so the caller can retry.
+    // No Enter: the filter applies as the text changes, and Enter would open the chat.
     private async Task<bool> PasteAndCommitFilterAsync(string text, CancellationToken ct)
     {
         var timing = _settings.Timing;
@@ -1037,15 +1311,19 @@ public sealed class Bestiary
         try { ImGui.SetClipboardText(text); }
         catch (Exception ex) { Log.Debug($"Clipboard set failed: {ex.Message}"); }
 
-        // Ctrl+F focuses, Ctrl+A selects, Ctrl+V pastes.
+        // A click focuses the field (Ctrl+F stopped doing that in 3.30), Ctrl+A selects,
+        // Ctrl+V pastes.
+        var box = _bestiaryUi.FilterBoxRect;
+        if (box.Width <= 8 || box.Height <= 8) return false;
+        await _input.ClickAtAsync(
+            box,
+            MouseButtons.Left,
+            preDelayMs: timing.Clicks.UiClickPreDelayMs.Value,
+            postDelayMs: timing.Polling.UiCheckInitialSettleDelayMs.Value);
+
         _input.PressKeyDown(Keys.LControlKey);
         try
         {
-            await _input.TapKeyAsync(Keys.F,
-                downHoldMs: timing.Clicks.KeyTapDelayMs.Value,
-                postDelayMs: timing.Polling.FastPollDelayMs.Value);
-            await _input.DelayForUiCheckAsync(timing.Polling.UiCheckInitialSettleDelayMs.Value);
-
             await _input.TapKeyAsync(Keys.A,
                 downHoldMs: timing.Clicks.KeyTapDelayMs.Value,
                 postDelayMs: timing.Polling.FastPollDelayMs.Value);
@@ -1056,7 +1334,6 @@ public sealed class Bestiary
         }
         finally
         {
-            // Released before Enter, which is not a Ctrl chord.
             _input.PressKeyUp(Keys.LControlKey);
         }
 
@@ -1064,7 +1341,6 @@ public sealed class Bestiary
 
         ct.ThrowIfCancellationRequested();
 
-        // Enter is sent only after the field is confirmed to hold the text.
         var landed = await _waits.WaitForAsync(
             () => FilterMatches(text),
             timeoutMs: PanelWaitTimeoutMs,
@@ -1072,11 +1348,7 @@ public sealed class Bestiary
 
         if (!landed) return false;
 
-        await _input.TapKeyAsync(Keys.Enter,
-            downHoldMs: timing.Clicks.KeyTapDelayMs.Value,
-            postDelayMs: timing.Polling.UiCheckInitialSettleDelayMs.Value);
-
-        // Committing re-runs the match pass; wait for it before reading.
+        // The new text re-runs the match pass; wait for it before reading.
         await WaitForRowsToSettleAsync();
         return true;
     }

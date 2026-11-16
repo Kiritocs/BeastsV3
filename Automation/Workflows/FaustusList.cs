@@ -517,28 +517,28 @@ public sealed class FaustusList
 
     // Rows are not separate elements (the list is one drawn region), so the first row is
     // found by probing plausible offsets and reading the selection back after each click.
-    private static readonly float[] CurrencyRowOffsetsPx = { 10f, 18f, 26f, 34f, 44f, 56f };
+    // The likeliest offsets come first: a click on the wrong row picks another currency.
+    private static readonly float[] CurrencyRowOffsetsPx = { 26f, 18f, 34f, 10f, 44f, 56f };
 
     // Forces the popup's currency back to Chaos Orb. Returns whether it clicked through the
     // dropdown, so the caller only re-focuses the price field when it had to. A no-op past
     // the first correction.
     private async Task<bool> EnsureListingCurrencyAsync()
     {
-        if (string.Equals(_merchant.PopupCurrencyName(), ListingCurrencyName, StringComparison.OrdinalIgnoreCase))
-            return false;
+        if (IsListingCurrencySelected()) return false;
 
         var timing = _settings.Timing;
 
         foreach (var offset in CurrencyRowOffsetsPx)
         {
-            if (_merchant.PriceCurrencyDropdown?.IsOpened != true && !await ToggleCurrencyDropdownAsync())
-            {
-                Log.Warn("Faustus price currency dropdown would not open - leaving the listing currency as-is.");
-                return true;
-            }
-
             var boxRect = _merchant.PriceCurrencyDropdown?.GetClientRect();
             if (boxRect == null) break;
+
+            // Opened with a click on the box every time. Whether the list is open cannot be
+            // read (ExileCore's flag stays "open" since 3.30), but it is closed here: the
+            // popup starts closed, and the click of a failed attempt closes it again.
+            await _input.ClickAtAsync(boxRect.Value, MouseButtons.Left,
+                preDelayMs: timing.Clicks.UiClickPreDelayMs.Value, postDelayMs: timing.Clicks.UiClickPostDelayMs.Value);
 
             // Scrolled to the top before every attempt - see CurrencyScrollUpTicks.
             await _input.MoveCursorToAsync(new SharpVec2(boxRect.Value.Center.X, boxRect.Value.Bottom + 20));
@@ -549,14 +549,10 @@ public sealed class FaustusList
             await _input.ClickAtAsync(rowPos, MouseButtons.Left,
                 preDelayMs: timing.Clicks.UiClickPreDelayMs.Value, postDelayMs: timing.Clicks.UiClickPostDelayMs.Value);
 
-            if (await _waits.WaitForAsync(
-                    () => string.Equals(_merchant.PopupCurrencyName(), ListingCurrencyName, StringComparison.OrdinalIgnoreCase),
-                    300, timing.Polling.FastPollDelayMs.Value))
-            {
-                // Selecting normally closes the dropdown on its own; only nudge it shut if not.
-                if (_merchant.PriceCurrencyDropdown?.IsOpened == true) await ToggleCurrencyDropdownAsync();
+            if (await _waits.WaitForAsync(IsListingCurrencySelected, 300, timing.Polling.FastPollDelayMs.Value))
                 return true;
-            }
+
+            Log.Debug($"Faustus price currency: a click {offset:0}px under the box left it on '{_merchant.PopupCurrencyName() ?? "unknown"}'.");
         }
 
         throw new InvalidOperationException(
@@ -565,19 +561,8 @@ public sealed class FaustusList
             "this run - set it to Chaos Orb manually once in the popup and re-run.");
     }
 
-    private async Task<bool> ToggleCurrencyDropdownAsync()
-    {
-        var timing = _settings.Timing;
-        var boxRect = _merchant.PriceCurrencyDropdown?.GetClientRect();
-        if (boxRect == null) return false;
-
-        var wasOpened = _merchant.PriceCurrencyDropdown?.IsOpened == true;
-        await _input.ClickAtAsync(boxRect.Value, MouseButtons.Left,
-            preDelayMs: timing.Clicks.UiClickPreDelayMs.Value, postDelayMs: timing.Clicks.UiClickPostDelayMs.Value);
-
-        return await _waits.WaitForAsync(() => _merchant.PriceCurrencyDropdown?.IsOpened == !wasOpened, 500,
-            timing.Polling.FastPollDelayMs.Value);
-    }
+    private bool IsListingCurrencySelected() =>
+        string.Equals(_merchant.PopupCurrencyName(), ListingCurrencyName, StringComparison.OrdinalIgnoreCase);
 
     // ---- shop-tab helpers ---------------------------------------------
 

@@ -30,7 +30,7 @@ public sealed class ClipboardAutoPaste
 
     // The first reading only establishes a baseline. Without it, loading (or reloading) the
     // plugin while the tab is already open reads as "the tab just opened", which fires a paste
-    // - Ctrl+F/A/V at the game - purely because the plugin started.
+    // - a click and Ctrl+A/V at the game - purely because the plugin started.
     private bool _primed;
 
     private bool _wasVisibleLastFrame;
@@ -111,15 +111,20 @@ public sealed class ClipboardAutoPaste
 
             if (_runner.IsRunning || !_bestiary.IsCapturedBeastsTabReady) return;
 
-            // Ctrl+F focuses, Ctrl+A selects, Ctrl+V pastes, Enter commits.
+            // A click focuses the field (Ctrl+F stopped doing that in 3.30), Ctrl+A selects,
+            // Ctrl+V pastes. No Enter: the filter applies as the text changes, and Enter would
+            // open the chat.
+            var box = _bestiary.FilterBoxRect;
+            if (box.Width <= 8 || box.Height <= 8) return;
+            await _input.ClickAtAsync(
+                box,
+                MouseButtons.Left,
+                preDelayMs: timing.Clicks.UiClickPreDelayMs.Value,
+                postDelayMs: timing.Polling.UiCheckInitialSettleDelayMs.Value);
+
             _input.PressKeyDown(Keys.LControlKey);
             try
             {
-                await _input.TapKeyAsync(Keys.F,
-                    downHoldMs: timing.Clicks.KeyTapDelayMs.Value,
-                    postDelayMs: timing.Polling.FastPollDelayMs.Value);
-                await _input.DelayForUiCheckAsync(timing.Polling.UiCheckInitialSettleDelayMs.Value);
-
                 await _input.TapKeyAsync(Keys.A,
                     downHoldMs: timing.Clicks.KeyTapDelayMs.Value,
                     postDelayMs: timing.Polling.FastPollDelayMs.Value);
@@ -134,9 +139,6 @@ public sealed class ClipboardAutoPaste
             }
 
             await _input.DelayForUiCheckAsync(timing.Polling.UiCheckInitialSettleDelayMs.Value);
-            await _input.TapKeyAsync(Keys.Enter,
-                downHoldMs: timing.Clicks.KeyTapDelayMs.Value,
-                postDelayMs: timing.Polling.FastPollDelayMs.Value);
 
             // Verifies the paste landed; a mismatch is logged rather than thrown.
             var landed = _bestiary.FilterText;

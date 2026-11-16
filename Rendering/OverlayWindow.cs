@@ -31,7 +31,8 @@ public static class OverlayWindow
         float yPercent,
         Style style,
         bool centerHorizontally = true,
-        float maxWidthPercent = 0f)
+        float maxWidthPercent = 0f,
+        Color[] lineColors = null)
     {
         var rect = game.Window.GetWindowRectangle();
         var anchor = new Vector2(rect.Width * (xPercent / 100f), rect.Height * (yPercent / 100f));
@@ -78,7 +79,28 @@ public static class OverlayWindow
         ImGui.Begin(windowId, flags);
         ImGuiEx.PushFontScale(style.TextScale);
         if (wrapWidth > 0f) ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + wrapWidth);
-        ImGui.TextColored(ImGuiEx.ToVec4(style.Text), text);
+        // Unformatted on purpose: TextColored treats its text as a printf format, so a '%' in
+        // it printed garbage.
+        if (lineColors == null)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Text, ImGuiEx.ToVec4(style.Text));
+            ImGui.TextUnformatted(text);
+            ImGui.PopStyleColor();
+        }
+        else
+        {
+            // One text item per line so each line can take its own colour. No item
+            // spacing, so the lines sit exactly where the one-block text would put them.
+            ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, Vector2.Zero);
+            var lines = text.Split('\n');
+            for (var i = 0; i < lines.Length; i++)
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, ImGuiEx.ToVec4(i < lineColors.Length ? lineColors[i] : style.Text));
+                ImGui.TextUnformatted(lines[i]);
+                ImGui.PopStyleColor();
+            }
+            ImGui.PopStyleVar();
+        }
         if (wrapWidth > 0f) ImGui.PopTextWrapPos();
         ImGui.PopFont();
         ImGui.End();

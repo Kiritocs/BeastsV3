@@ -31,8 +31,23 @@ public sealed class TabPickers
         DrawStashTabList("RedBeasts", _settings.BestiaryAutomation.RedBeastTabs,
             emptyHint: "No tabs set - red beasts go to the Itemized Beasts tabs.");
 
-    public void DrawRestockTargetTab(RestockTargetSettings target, int slot) =>
-        DrawStashTabPicker($"RestockTarget{slot}", target.StashTabName, "Select tab");
+    public void DrawRestockTargetTab(RestockTargetSettings target) =>
+        DrawStashTabPicker("RestockMapTarget", target.StashTabName, "Select tab");
+
+    public void DrawThreadChoice(ThreadSlotSettings slot, string id)
+    {
+        ImGui.SetNextItemWidth(ComboWidth);
+        if (!ImGui.BeginCombo($"##BeastsV3Thread{id}", slot.Thread.Value)) return;
+
+        foreach (var choice in ThreadSlotSettings.Choices)
+        {
+            var isSelected = string.Equals(slot.Thread.Value, choice, StringComparison.Ordinal);
+            if (ImGui.Selectable(choice, isSelected)) slot.Thread.Value = choice;
+            if (isSelected) ImGui.SetItemDefaultFocus();
+        }
+
+        ImGui.EndCombo();
+    }
 
     public void DrawFaustusShopTab()
     {

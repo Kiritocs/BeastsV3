@@ -17,6 +17,7 @@ public sealed class BestiaryUi
     // Children of CapturedBeastsTab: footer, viewport, scrollbar, loading overlay.
     private const int FooterChildIndex = 0;
     private const int ViewportChildIndex = 1;
+    private const int ScrollbarChildIndex = 2;
     private const int LoadingOverlayChildIndex = 3;
 
     // The viewport's single child: the tall element holding the whole grid, which slides
@@ -25,6 +26,9 @@ public sealed class BestiaryUi
 
     // Path to the beast filter's text element, relative to CapturedBeastsTab.
     private static readonly int[] FilterTextPath = { 0, 0, 1, 0 };
+
+    // Path to the filter's input box, the thing to click to put the cursor in it.
+    private static readonly int[] FilterBoxPath = { 0, 0, 1 };
 
     // Path to the Challenges category bar container; its children reorder.
     private static readonly int[] ChallengesEntriesRootPath = { 2, 0, 1, 0 };
@@ -63,14 +67,46 @@ public sealed class BestiaryUi
         }
     }
 
+    // Found by its shape among the Bestiary tab's pages, not through ExileCore's
+    // BestiaryTab.CapturedBeastsTab, which pointed at garbage after 3.30. The page keeps its
+    // place while the panel lives, so the last index is tried first.
     public CapturedBeastsTab CapturedBeastsTab
     {
         get
         {
-            try { return BestiaryTab?.CapturedBeastsTab; }
+            try
+            {
+                var bestiary = BestiaryTab;
+                if (bestiary == null) return null;
+
+                var page = bestiary.GetChildAtIndex(_capturedPageIndex);
+                if (!LooksLikeCapturedBeastsPage(page))
+                {
+                    page = null;
+                    var count = (int)Math.Min(bestiary.ChildCount, 64);
+                    for (var i = 0; i < count && page == null; i++)
+                    {
+                        var candidate = bestiary.GetChildAtIndex(i);
+                        if (!LooksLikeCapturedBeastsPage(candidate)) continue;
+                        page = candidate;
+                        _capturedPageIndex = i;
+                    }
+                }
+
+                return page == null ? null : bestiary.GetObject<CapturedBeastsTab>(page.Address);
+            }
             catch { return null; }
         }
     }
+
+    private int _capturedPageIndex;
+
+    // The Captured Beasts page is the only one made of exactly footer, viewport with one
+    // content child, three-part scrollbar and loading overlay.
+    private static bool LooksLikeCapturedBeastsPage(Element page) =>
+        page is { ChildCount: 4 } &&
+        page.GetChildAtIndex(ViewportChildIndex)?.ChildCount == 1 &&
+        page.GetChildAtIndex(ScrollbarChildIndex)?.ChildCount == 3;
 
     public bool IsBestiaryTabOpen => IsChallengesPanelVisible && BestiaryTab?.IsVisible == true;
 
@@ -80,8 +116,7 @@ public sealed class BestiaryUi
         get
         {
             if (!IsBestiaryTabOpen) return false;
-            var tab = CapturedBeastsTab;
-            return tab != null && tab.ChildCount > 0;
+            return CapturedBeastsTab?.IsVisible == true;
         }
     }
 
@@ -93,7 +128,7 @@ public sealed class BestiaryUi
         {
             if (!IsBestiaryTabOpen) return false;
             var tab = CapturedBeastsTab;
-            if (tab == null || tab.ChildCount == 0) return false;
+            if (tab?.IsVisible != true) return false;
             try { return tab.CapturedBeasts != null; }
             catch { return false; }
         }
@@ -667,6 +702,10 @@ public sealed class BestiaryUi
     }
 
     // ---- filter input --------------------------------------------------
+
+    // Screen rect of the filter's input box; empty when the tab is not showing.
+    public RectangleF FilterBoxRect =>
+        ImGuiEx.GetChildAt(CapturedBeastsTab, FilterBoxPath)?.GetClientRect() ?? default;
 
     // Current text in the beast filter field, via a fixed path with a footer-scan fallback.
     public string FilterText

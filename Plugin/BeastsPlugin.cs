@@ -44,6 +44,7 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
     private SessionRecorder _recorder;
     private AreaTransitions _areaTransitions;
     private AnalyticsOverlay _analyticsOverlay;
+    private ThreadEffectsOverlay _threadEffectsOverlay;
     private TelemetryUploader _telemetry;
 
     private WorldLabels _worldLabels;
@@ -90,15 +91,19 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
         Name = "Beasts V3";
     }
 
-    public override bool Initialise()
-    {
-        Settings.Restock.DisableThreadTargets();
-        return true;
-    }
+    public override bool Initialise() => true;
 
     public override void OnLoad()
     {
-        if (!AnalyticsSettings.Unlocked) Settings.Analytics.TurnOff();
+        var analytics = Settings.Analytics;
+        if (!analytics.RestoredAfterLock)
+        {
+            analytics.Enable.Value = true;
+            analytics.Web.Enabled.Value = true;
+            analytics.RestoredAfterLock = true;
+        }
+
+        if (!TelemetrySettings.Unlocked) analytics.Telemetry.ShareAnonymousData.Value = false;
 
         StartLogging();
 
@@ -158,6 +163,7 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
         _areaTransitions = new AreaTransitions(_recorder.State);
         // A getter, not the current value: _telemetry is assigned below, Render() runs later.
         _analyticsOverlay = new AnalyticsOverlay(GameController, Settings, _recorder, () => _telemetry);
+        _threadEffectsOverlay = new ThreadEffectsOverlay(GameController, Settings);
 
         // Opt-in telemetry. Enqueue does nothing with sharing off, so subscribing is safe.
         _telemetry = new TelemetryUploader(Settings);
@@ -215,7 +221,7 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
         _tabPickers = new TabPickers(Settings, _stashUi, _merchantUi, _atlasUi);
         _mapDeviceLoad = new MapDeviceLoad(_runner, _automationInput, _waits, Settings, GameController, _mapDeviceUi, _atlasUi, _inventoryUi, _cost, _prices, _restock, _hideoutTravel);
 
-        _bestiary = new Bestiary(_runner, _automationInput, _waits, Settings, _bestiaryUi, _inventoryUi, _clipboardAutoPaste, _capturedMonsterStash, _hideoutTravel);
+        _bestiary = new Bestiary(_runner, _automationInput, _waits, Settings, _bestiaryUi, _inventoryUi, _clipboardAutoPaste, _capturedMonsterStash, _hideoutTravel, _uiCleanup);
         _quickButtons.StartItemizeAll = () => Log.FireAndForget(() => _bestiary.ItemizeAllAsync(), "Bestiary itemize all");
         _quickButtons.StartDeleteAll = () => Log.FireAndForget(() => _bestiary.DeleteAllAsync(), "Bestiary delete all");
 
@@ -350,6 +356,7 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
         _recorder = null;
         _areaTransitions = null;
         _analyticsOverlay = null;
+        _threadEffectsOverlay = null;
         _telemetry = null;
         _worldLabels = null;
         _mapOverlay = null;
@@ -502,6 +509,7 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
         _worldLabels.RenderStylePreview();
         _pricePanels.Render();
         _analyticsOverlay.Render();
+        _threadEffectsOverlay.Render();
         _automationStatusOverlay.Render();
         _quickButtons.Render();
         _clipboardAutoPaste.Tick();
@@ -728,18 +736,15 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
         Settings.MerchantAutomation.FaustusShopTabPicker.DrawDelegate = () => _tabPickers.DrawFaustusShopTab();
         Settings.Restock.AtlasMapPicker.DrawDelegate = () => _tabPickers.DrawAtlasMap();
 
-        var restockTargets = new[]
-        {
-            Settings.Restock.Target1, Settings.Restock.Target2, Settings.Restock.Target3,
-            Settings.Restock.Target4, Settings.Restock.Target5, Settings.Restock.Target6,
-        };
-        for (var i = 0; i < restockTargets.Length; i++)
-        {
-            // Captured per iteration so each delegate binds its own target.
-            var target = restockTargets[i];
-            var slot = i + 1;
-            target.StashTabPicker.DrawDelegate = () => _tabPickers.DrawRestockTargetTab(target, slot);
-        }
+        Settings.Restock.MapTarget.StashTabPicker.DrawDelegate =
+            () => _tabPickers.DrawRestockTargetTab(Settings.Restock.MapTarget);
+
+        Settings.ThreadEffects.EffectPicker.DrawDelegate = () => _threadEffectsOverlay?.DrawEffectPicker();
+
+        var restock = Settings.Restock;
+        restock.LeftThreadSlot.ThreadPicker.DrawDelegate = () => _tabPickers.DrawThreadChoice(restock.LeftThreadSlot, "Left");
+        restock.MiddleThreadSlot.ThreadPicker.DrawDelegate = () => _tabPickers.DrawThreadChoice(restock.MiddleThreadSlot, "Middle");
+        restock.RightThreadSlot.ThreadPicker.DrawDelegate = () => _tabPickers.DrawThreadChoice(restock.RightThreadSlot, "Right");
     }
 
     private void WireAnalyticsButtons()

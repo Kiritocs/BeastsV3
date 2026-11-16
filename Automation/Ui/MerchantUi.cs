@@ -71,13 +71,26 @@ public sealed class MerchantUi
 
     public Element PriceAmountInput => PriceMenu?.PriceAmountInput;
 
+    // The dropdown's first entry. Seen in-game: the selection reads 0 with Chaos Orb picked
+    // and 1 with Divine Orb.
+    private const string FirstCurrencyName = "Chaos Orb";
+
     // Name of the currency currently selected in the Faustus price popup, or null when unreadable.
+    // ExileCore returns no option names since 3.30, only the selected position, so without
+    // names the first position is known as Chaos Orb and any other by its number.
     public string PopupCurrencyName()
     {
         var dropdown = PriceCurrencyDropdown;
-        var options = dropdown?.Options;
-        var index = dropdown?.RememberedSelection ?? -1;
-        return options != null && index >= 0 && index < options.Count ? options[index]?.Name : null;
+        if (dropdown == null) return null;
+
+        var options = dropdown.Options;
+        var index = dropdown.RememberedSelection;
+        if (index < 0) return null;
+
+        if (options != null && options.Count > 0)
+            return index < options.Count ? options[index]?.Name : null;
+
+        return index == 0 ? FirstCurrencyName : $"currency #{index + 1} in the list";
     }
 
     // Items visible in the current merchant panel view.

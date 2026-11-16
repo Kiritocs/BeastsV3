@@ -744,8 +744,6 @@ public sealed class SettingsMenu
                 automation == null ? "Plugin is not loaded." : "No workflow is running.");
         }
 
-        if (!AnalyticsSettings.Unlocked) return;
-
         ImGui.SameLine();
         if (_settings.Analytics.Enable.Value)
         {
@@ -779,13 +777,6 @@ public sealed class SettingsMenu
         QuickAction("Refresh prices##bv3home", size, _settings.BeastPrices.FetchPrices,
             "Fetch the latest beast and market prices from poe.ninja now.");
         ImGui.SameLine();
-
-        if (!AnalyticsSettings.Unlocked)
-        {
-            QuickAction("Open log folder##bv3home", size, _settings.LogFile.OpenFolder,
-                "Open config/BeastsV3Logs in Explorer.");
-            return;
-        }
 
         QuickAction("Open dashboard##bv3home", size, _settings.Analytics.Web.OpenInBrowser,
             "Open the analytics web dashboard in your browser.");

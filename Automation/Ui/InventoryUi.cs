@@ -4,6 +4,8 @@ using System.Linq;
 using BeastsV3.Shared;
 using ExileCore;
 using ExileCore.PoEMemory;
+using ExileCore.PoEMemory.Components;
+using ExileCore.PoEMemory.MemoryObjects;
 using ExileCore.PoEMemory.Elements.InventoryElements;
 using ExileCore.Shared.Enums;
 using SharpVec2 = SharpDX.Vector2;
@@ -24,6 +26,106 @@ public sealed class InventoryUi
 
     public bool IsVisible =>
         _game?.IngameState?.IngameUi?.InventoryPanel?[InventoryIndex.PlayerInventory]?.IsVisible == true;
+
+    // True while an item is attached to the mouse cursor.
+    public bool IsHoldingItem =>
+        _game?.IngameState?.IngameUi?.Cursor?.Action == MouseActionType.HoldItem;
+
+    // ---- itemized beasts on the ground -----------------------------------
+
+    private static bool IsGroundCapturedMonster(Entity worldItem)
+    {
+        var path = worldItem?.GetComponent<WorldItem>()?.ItemEntity?.Path;
+        return !string.IsNullOrEmpty(path) &&
+               path.IndexOf(CapturedMonsterPathFragment, StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    // The itemized beasts lying on the ground, nearest first.
+    public List<Entity> GroundCapturedMonsters()
+    {
+        var entities = _game?.EntityListWrapper?.Entities;
+        if (entities == null) return new List<Entity>();
+
+        return entities
+            .Where(e => e is { IsValid: true, Type: EntityType.WorldItem } && IsGroundCapturedMonster(e))
+            .OrderBy(e => e.DistancePlayer)
+            .ToList();
+    }
+
+    // Whether ground labels are switched on, or null when it cannot be told. Read from the
+    // labels of things that are not items (Einhar, the stash, a waypoint): those are shown only
+    // while labels are on. Item labels do not work for this - beasts on the ground kept
+    // reporting visible with labels off. With no such label around, the game's own "always
+    // highlight" option is used, which followed the toggle key both ways.
+    public bool? AreGroundLabelsOn
+    {
+        get
+        {
+            var labels = _game?.IngameState?.IngameUi?.ItemsOnGroundLabels;
+
+            // The thing under the cursor shows its label even with labels off, so it says nothing.
+            var hovered = _game?.IngameState?.IngameUi?.ItemsOnGroundLabelElement?.ItemOnHover?.Address ?? 0;
+            var sawOne = false;
+            if (labels != null)
+            {
+                foreach (var label in labels)
+                {
+                    var entity = label?.ItemOnGround;
+                    if (entity == null || entity.Type == EntityType.WorldItem) continue;
+                    if (hovered != 0 && entity.Address == hovered) continue;
+
+                    sawOne = true;
+                    if (label.IsVisible) return true;
+                }
+            }
+
+            if (sawOne) return false;
+            return AlwaysHighlightOption;
+        }
+    }
+
+    // The game's own "always highlight" option, or null when it cannot be read.
+    public bool? AlwaysHighlightOption =>
+        bool.TryParse(GameOption("UI", "always_highlight"), out var on) ? on : null;
+
+    private string GameOption(string section, string key)
+    {
+        try
+        {
+            var map = _game?.IngameState?.IngameUi?.ItemsOnGroundLabelElement?.Config?.ConfigMap;
+            if (map != null && map.TryGetValue(section, out var values) && values?.SectionConfig != null &&
+                values.SectionConfig.TryGetValue(key, out var value))
+                return value?.ToString();
+        }
+        catch
+        {
+            // Falls through to "not known".
+        }
+        return null;
+    }
+
+    // Where a ground item is drawn on screen, or null when that is outside the game window.
+    public SharpVec2? ScreenPositionOf(Entity entity)
+    {
+        var camera = _game?.IngameState?.Camera;
+        if (camera == null || entity == null) return null;
+
+        var screen = camera.WorldToScreen(entity.PosNum);
+        var window = _game.Window.GetWindowRectangle();
+        if (screen.X <= 0 || screen.Y <= 0 || screen.X >= window.Width || screen.Y >= window.Height) return null;
+        return new SharpVec2(screen.X, screen.Y);
+    }
+
+    // True while the cursor is over an itemized beast on the ground, so a click picks it up
+    // and does not walk the character or talk to an NPC standing there.
+    public bool IsHoveringGroundCapturedMonster =>
+        IsGroundCapturedMonster(_game?.IngameState?.IngameUi?.ItemsOnGroundLabelElement?.ItemOnHover);
+
+    // The player's "toggle item highlighting" key, from the game's own key bindings.
+    public System.Windows.Forms.Keys HighlightToggleKey =>
+        int.TryParse(GameOption("ACTION_KEYS", "highlight_toggle"), out var code) && code > 0
+            ? (System.Windows.Forms.Keys)code
+            : System.Windows.Forms.Keys.None;
 
     public IList<NormalInventoryItem> VisibleItems =>
         _game?.IngameState?.IngameUi?.InventoryPanel?[InventoryIndex.PlayerInventory]?.VisibleInventoryItems;

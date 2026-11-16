@@ -101,7 +101,8 @@ public sealed class AnalyticsOverlay
 
         // Which data cohort the current tree contributes to. Shown regardless of sharing: it
         // doubles as a check that the tree is what you think it is.
-        if (_settings.Analytics.Telemetry.ShowCohortBanner.Value &&
+        if (TelemetrySettings.Unlocked &&
+            _settings.Analytics.Telemetry.ShowCohortBanner.Value &&
             state.IsCurrentAreaTrackable &&
             state.CurrentMapAtlas?.AllocatedNodes.Length > 0)
         {
