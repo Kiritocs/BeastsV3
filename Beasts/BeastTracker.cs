@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using BeastsV3.Plugin.Settings;
 using BeastsV3.Shared;
 using ExileCore;
@@ -117,6 +118,21 @@ public sealed class BeastTracker
         _capturedIds.Clear();
         _markers.Clear();
         _markerSnapshot.Clear();
+    }
+
+    // The ids counted and captured in this instance, for an autosave.
+    public (long[] Counted, long[] Captured) SaveMapProgress() =>
+        (_countedRareIds.ToArray(), _capturedIds.ToArray());
+
+    // Puts back an autosave's ids, so a reload inside the same instance does not count its
+    // beasts again. Markers are not saved; live beasts get theirs back when seen.
+    public void RestoreMapProgress(IEnumerable<long> counted, IEnumerable<long> captured, int redBeastsFound)
+    {
+        _countedRareIds.Clear();
+        _capturedIds.Clear();
+        foreach (var id in counted ?? []) _countedRareIds.Add(id);
+        foreach (var id in captured ?? []) _capturedIds.Add(id);
+        RedBeastsFound = Math.Max(0, redBeastsFound);
     }
 
     // Restamps LastSeenUtc on cached markers still mid-capture, so their grace is measured

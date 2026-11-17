@@ -63,6 +63,9 @@ public sealed class CostTracker
     public int? CurrentAdditionalRedBeasts { get; private set; }
     public int? CurrentDuplicateCapturedChancePct { get; private set; }
 
+    // Every beast and thread stat of the current map, latched with the two above.
+    public Dictionary<string, int> CurrentMapStats { get; private set; } = new();
+
     // True when every capture in the current map is duplicated. A partial chance (3.30's
     // Bonded for Life is 20%) is not counted: which captures it hit cannot be observed.
     public bool CurrentMapDuplicatesCaptures => CurrentDuplicateCapturedChancePct >= 100;
@@ -108,6 +111,7 @@ public sealed class CostTracker
 
         CurrentAdditionalRedBeasts = reading.AdditionalRedBeasts;
         CurrentDuplicateCapturedChancePct = reading.DuplicateCapturedChancePct;
+        CurrentMapStats = MapModifierStats.ReadRelevant(_game);
         AddBestiaryThreadsTheDeviceMissed(reading);
 
         if (!_modifierLogged)
@@ -182,6 +186,7 @@ public sealed class CostTracker
         // Carrying the previous map's stats over would be worse than having none.
         CurrentAdditionalRedBeasts = null;
         CurrentDuplicateCapturedChancePct = null;
+        CurrentMapStats = new();
         _modifierPolls = 0;
         _lastModifierPollUtc = DateTime.MinValue;
         _modifierLogged = false;
@@ -197,12 +202,37 @@ public sealed class CostTracker
                      : " - Map Device was not read."));
     }
 
+    // The current map's cost state, for an autosave.
+    public MapCostInProgress SaveCurrent() => new()
+    {
+        Lines = SnapshotCurrent(),
+        AdditionalRedBeasts = CurrentAdditionalRedBeasts,
+        DuplicateCapturedChancePct = CurrentDuplicateCapturedChancePct,
+        MapStats = new Dictionary<string, int>(CurrentMapStats),
+        RegionFreeBestiary = _currentRegionFreeBestiary,
+        DeviceReadAgeMs = CurrentDeviceReadAgeMs,
+    };
+
+    // Puts back a current map's cost state from an autosave.
+    public void RestoreCurrent(MapCostInProgress saved)
+    {
+        ResetCurrent();
+        if (saved == null) return;
+        _current.AddRange(CloneList(saved.Lines));
+        CurrentAdditionalRedBeasts = saved.AdditionalRedBeasts;
+        CurrentDuplicateCapturedChancePct = saved.DuplicateCapturedChancePct;
+        CurrentMapStats = new Dictionary<string, int>(saved.MapStats ?? new());
+        _currentRegionFreeBestiary = saved.RegionFreeBestiary;
+        CurrentDeviceReadAgeMs = saved.DeviceReadAgeMs;
+    }
+
     // Clears the current breakdown.
     public void ResetCurrent()
     {
         _current.Clear();
         CurrentAdditionalRedBeasts = null;
         CurrentDuplicateCapturedChancePct = null;
+        CurrentMapStats = new();
         _modifierPolls = 0;
         _lastModifierPollUtc = DateTime.MinValue;
         _modifierLogged = false;

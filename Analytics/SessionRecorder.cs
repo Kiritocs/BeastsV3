@@ -17,6 +17,15 @@ public sealed class SessionRecorder
 {
     private const int MaxMapHistoryEntries = 200;
 
+    // How often the session is autosaved while a map's clock runs. A crash loses at most this
+    // much map time. A beast seen or captured is saved sooner, after SaveAfterBeastDelay, and
+    // every area change is saved. Nothing changes in a hideout or a paused game, so nothing is
+    // written there.
+    private static readonly TimeSpan AutoSaveInterval = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan SaveAfterBeastDelay = TimeSpan.FromSeconds(1);
+    private DateTime _nextAutoSaveUtc = DateTime.MinValue;
+    private DateTime? _beastSaveDueUtc;
+
     private readonly GameController _game;
     private readonly BeastsSettings _settings;
     private readonly BeastTracker _tracker;
@@ -71,6 +80,14 @@ public sealed class SessionRecorder
         ApplyPauseMenuState(nowUtc);
         UpdateCurrentMapTimer(nowUtc);
         DetectQuestMissionComplete();
+
+        var clockRuns = State.IsCurrentAreaTrackable && !State.PauseMenuStartUtc.HasValue;
+        if ((clockRuns && nowUtc >= _nextAutoSaveUtc) || nowUtc >= _beastSaveDueUtc)
+        {
+            _nextAutoSaveUtc = nowUtc + AutoSaveInterval;
+            _beastSaveDueUtc = null;
+            AutoSave(inBackground: true);
+        }
     }
 
     // Applies an area change: finalizes the previous map if needed and restarts the timer.
@@ -83,7 +100,6 @@ public sealed class SessionRecorder
         if (decision.ShouldFinalizePreviousMap)
         {
             FinalizeCurrentMap(decision.PreviousAreaHash, decision.PreviousAreaName, nowUtc);
-            AutoSave();
         }
 
         if (decision.Kind == AreaTransitionKind.EnteredNewTrackableMap)
@@ -99,6 +115,11 @@ public sealed class SessionRecorder
         }
 
         RestartCurrentMapTimer(nowUtc);
+
+        // The state an area change leaves behind, saved once: a banked map, or a map's clock
+        // stopped on the way out.
+        _nextAutoSaveUtc = nowUtc + AutoSaveInterval;
+        AutoSave(inBackground: true);
     }
 
     // Manually banks the map currently being run, without waiting for an area transition.
@@ -216,6 +237,7 @@ public sealed class SessionRecorder
             {
                 DurationSeconds = State.GetTotalTime(nowUtc).TotalSeconds,
                 MapsCompleted = State.CompletedMapCount,
+                CompletedMapsDurationSeconds = State.CompletedMapsDuration.TotalSeconds,
                 BeastsFound = State.SessionBeastsFound,
                 RedBeastsFound = State.SessionRedBeastsFound,
                 CapturedChaos = completedCaptured + currentCaptured,
@@ -226,17 +248,141 @@ public sealed class SessionRecorder
             FamilyTotals = familyTotals,
             MapHistory = mapHistoryOrdered,
             CostDefaults = _cost.Prepared.Select(Clone).ToArray(),
+            CurrentMap = request?.IsAutoSave == true ? BuildMapInProgress() : null,
         };
     }
 
-    // Writes an autosave unless the session is still empty.
-    public bool AutoSave()
+    // The current map's live state, or null when no map was started this session.
+    private MapInProgress BuildMapInProgress()
+    {
+        if (string.IsNullOrWhiteSpace(State.ActiveMapAreaHash) && State.ActiveMapInstanceId < 0) return null;
+
+        var (counted, captured) = _tracker.SaveMapProgress();
+        return new MapInProgress
+        {
+            AreaHash = State.ActiveMapAreaHash,
+            AreaName = State.ActiveMapAreaName,
+            InstanceId = State.ActiveMapInstanceId,
+            SideZones = State.ActiveMapSideZones.ToArray(),
+            IsFinalized = State.MapWasFinalized,
+            WasComplete = State.CurrentMapWasComplete,
+            ElapsedSeconds = State.CurrentMapElapsed.TotalSeconds,
+            BeastsFound = State.CurrentMapBeastsFound,
+            RedBeastsFound = State.CurrentMapRedBeastsFound,
+            FirstRedSeenSeconds = State.CurrentMapFirstRedSeenSeconds,
+            QuestRedBeastsTotal = _questTotalSeen,
+            Atlas = State.CurrentMapAtlas ?? new AtlasSnapshot(),
+            BeastCounts = new Dictionary<string, int>(State.CurrentMapValuableBeastCounts),
+            CapturedCounts = new Dictionary<string, int>(State.CurrentMapValuableBeastCapturedCounts),
+            Encounters = State.CurrentMapEncounters
+                .Select(x => new EncounterInProgress
+                {
+                    EntityId = x.Key,
+                    BeastName = x.Value.BeastName,
+                    FirstSeenSeconds = x.Value.FirstSeenSeconds,
+                    CapturedSeconds = x.Value.CapturedSeconds,
+                })
+                .ToArray(),
+            ReplayEvents = BuildCurrentMapReplayEventsForSnapshot(),
+            CountedEntityIds = counted,
+            CapturedEntityIds = captured,
+            TrackerRedBeastsFound = _tracker.RedBeastsFound,
+            Cost = _cost.SaveCurrent(),
+        };
+    }
+
+    // Carries on with an autosaved session after a reload or a crash: same session id, totals
+    // and history, and the map that was being run, left as if the player had just stepped out
+    // of it. The caller then replays the current area through the normal area change, which
+    // resumes that map, banks it, or keeps it waiting, exactly as for a real area change.
+    // Time between the save and now is not counted.
+    public bool Resume(SavedSessionData data, DateTime nowUtc)
+    {
+        if (!IsAnalyticsEnabled() || data == null || string.IsNullOrWhiteSpace(data.SessionId)) return false;
+
+        ResetSession(nowUtc, startNewCurrentMapTimer: false);
+        State.SessionId = data.SessionId;
+
+        var summary = data.Summary ?? new SessionSummary();
+        var history = (data.MapHistory ?? [])
+            .Where(x => x != null)
+            .OrderByDescending(x => x.CompletedAtUtc)
+            .Take(MaxMapHistoryEntries)
+            .ToList();
+
+        State.LoadedSessionsDuration = TimeSpan.FromSeconds(Math.Max(0, summary.DurationSeconds));
+        State.SessionBeastsFound = Math.Max(0, summary.BeastsFound);
+        State.SessionRedBeastsFound = Math.Max(0, summary.RedBeastsFound);
+        State.CompletedMapCount = Math.Max(0, summary.MapsCompleted);
+
+        // Saves from before the field existed fall back to the capped history's durations.
+        State.CompletedMapsDuration = TimeSpan.FromSeconds(summary.CompletedMapsDurationSeconds > 0
+            ? summary.CompletedMapsDurationSeconds
+            : history.Sum(x => Math.Max(0, x.DurationSeconds)));
+        State.MapHistory.AddRange(history);
+
+        RestoreMapInProgress(data.CurrentMap);
+        _nextAutoSaveUtc = nowUtc + AutoSaveInterval;
+        return true;
+    }
+
+    private void RestoreMapInProgress(MapInProgress map)
+    {
+        if (map == null) return;
+
+        State.ActiveMapAreaHash = map.AreaHash ?? string.Empty;
+        State.ActiveMapAreaName = map.AreaName ?? string.Empty;
+        State.ActiveMapInstanceId = map.InstanceId;
+        State.IsInSideZone = false;
+        State.ActiveMapSideZones.Clear();
+        foreach (var zone in map.SideZones ?? []) State.ActiveMapSideZones.Add(zone);
+        State.IsCurrentAreaTrackable = false;
+        State.CurrentMapStartUtc = null;
+        _tracker.RestoreMapProgress(map.CountedEntityIds, map.CapturedEntityIds, map.TrackerRedBeastsFound);
+
+        if (map.IsFinalized)
+        {
+            State.MapWasFinalized = true;
+            return;
+        }
+
+        State.CurrentMapWasComplete = map.WasComplete;
+        State.CurrentMapElapsed = TimeSpan.FromSeconds(Math.Max(0, map.ElapsedSeconds));
+        State.CurrentMapBeastsFound = Math.Max(0, map.BeastsFound);
+        State.CurrentMapRedBeastsFound = Math.Max(0, map.RedBeastsFound);
+        State.CurrentMapFirstRedSeenSeconds = map.FirstRedSeenSeconds;
+        State.CurrentMapAtlas = map.Atlas ?? new AtlasSnapshot();
+        foreach (var (name, count) in map.BeastCounts ?? new()) State.CurrentMapValuableBeastCounts[name] = count;
+        foreach (var (name, count) in map.CapturedCounts ?? new()) State.CurrentMapValuableBeastCapturedCounts[name] = count;
+        foreach (var e in map.Encounters ?? [])
+        {
+            if (e == null) continue;
+            State.CurrentMapEncounters[e.EntityId] = new BeastEncounter
+            {
+                BeastName = e.BeastName,
+                FirstSeenSeconds = e.FirstSeenSeconds,
+                CapturedSeconds = e.CapturedSeconds,
+            };
+        }
+        State.CurrentMapReplayEvents.AddRange((map.ReplayEvents ?? []).Where(x => x != null));
+        _questTotalSeen = Math.Max(0, map.QuestRedBeastsTotal);
+        _cost.RestoreCurrent(map.Cost);
+    }
+
+    // Writes an autosave unless the session is still empty. evenIfEmpty writes it anyway, so a
+    // reset session replaces the old one as the newest autosave and a reload does not resume it.
+    // inBackground leaves serialising and writing to SessionStore's background thread.
+    public bool AutoSave(bool evenIfEmpty = false, bool inBackground = false)
     {
         if (!IsAnalyticsEnabled()) return false;
-        if (State.MapHistory.Count == 0 && State.SessionBeastsFound == 0) return false;
+        if (!evenIfEmpty && State.MapHistory.Count == 0 && State.SessionBeastsFound == 0 &&
+            State.CurrentMapElapsed <= TimeSpan.Zero) return false;
 
         var data = BuildSavedSessionData(DateTime.UtcNow, new SaveSessionRequest { IsAutoSave = true });
-        return _store.SaveAutoSave(data);
+        if (!inBackground) return _store.SaveAutoSave(data);
+
+        _store.QueueAutoSave(data);
+        return true;
     }
 
     // Writes a named save of the current session.
@@ -310,6 +456,7 @@ public sealed class SessionRecorder
 
         State.CurrentMapBeastsFound++;
         State.SessionBeastsFound++;
+        _beastSaveDueUtc ??= nowUtc + SaveAfterBeastDelay;
 
         if (string.IsNullOrWhiteSpace(beastName)) return;
 
@@ -358,6 +505,7 @@ public sealed class SessionRecorder
 
         var offsetSeconds = State.CurrentMapReplayOffsetSeconds(nowUtc);
         encounter.CapturedSeconds = offsetSeconds;
+        _beastSaveDueUtc ??= nowUtc + SaveAfterBeastDelay;
 
         // A map that always duplicates yields two beasts per capture.
         var captureMultiplier = _cost.CurrentMapDuplicatesCaptures ? 2 : 1;
@@ -411,6 +559,9 @@ public sealed class SessionRecorder
     private static readonly TimeSpan QuestPollInterval = TimeSpan.FromMilliseconds(250);
     private DateTime _questPolledUtc = DateTime.MinValue;
     private int _questTotal;
+
+    // The last total the quest line showed in this map; the line can be gone by the time the map ends.
+    private int _questTotalSeen;
     private bool _questMissionComplete;
 
     // Latches CurrentMapWasComplete once the map counts as done.
@@ -425,6 +576,7 @@ public sealed class SessionRecorder
             _questPolledUtc = now;
             _questTotal = BeastQuest.TryGetProgress(_game, out _, out var total) && total > 0 ? total : 0;
             _questMissionComplete = BeastQuest.IsMissionComplete(_game);
+            if (_questTotal > 0) _questTotalSeen = _questTotal;
         }
 
         // Same rule the counter overlay uses.
@@ -522,7 +674,7 @@ public sealed class SessionRecorder
             BeastsFound = beastsFound,
             RedBeastsFound = redBeastsFound,
 
-            // Uncatalogd capturables are yellow in the normal case; a new or renamed red also lands
+            // Zero since 3.30, where only red beasts are tracked; a new or renamed red also lands
             // here until BeastCatalog is updated, which LogUnknownMetadataOnce surfaces.
             YellowBeastsFound = Math.Max(0, beastsFound - redBeastsFound),
 
@@ -541,6 +693,8 @@ public sealed class SessionRecorder
             // What the game actually applied, latched from the map's stats. Beats the device reading.
             MapAdditionalRedBeasts = _cost?.CurrentAdditionalRedBeasts,
             MapDuplicateCapturedBeastsChancePct = _cost?.CurrentDuplicateCapturedChancePct,
+            MapStats = new Dictionary<string, int>(_cost?.CurrentMapStats ?? new()),
+            QuestRedBeastsTotal = _questTotalSeen > 0 ? _questTotalSeen : null,
             FirstRedSeenSeconds = State.CurrentMapFirstRedSeenSeconds,
             Atlas = State.CurrentMapAtlas ?? new AtlasSnapshot(),
             BeastBreakdown = breakdown,
@@ -631,6 +785,7 @@ public sealed class SessionRecorder
     {
         _questPolledUtc = DateTime.MinValue;
         _questTotal = 0;
+        _questTotalSeen = 0;
         _questMissionComplete = false;
         BeastQuest.ResetLogState();
 
@@ -781,6 +936,8 @@ public sealed class SessionRecorder
         DeviceReadAgeMs = source.DeviceReadAgeMs,
         MapAdditionalRedBeasts = source.MapAdditionalRedBeasts,
         MapDuplicateCapturedBeastsChancePct = source.MapDuplicateCapturedBeastsChancePct,
+        MapStats = new Dictionary<string, int>(source.MapStats ?? new()),
+        QuestRedBeastsTotal = source.QuestRedBeastsTotal,
         FirstRedSeenSeconds = source.FirstRedSeenSeconds,
         Atlas = source.Atlas == null
             ? new AtlasSnapshot()

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using ExileCore;
 using ExileCore.Shared.Enums;
@@ -31,18 +32,28 @@ public static class MapModifierStats
         public int PaidBestiaryThreads => Math.Max(0, BestiaryThreads - FreeThreads);
     }
 
-    // Every beast or thread stat on the map with its value, for the log. After a league patch
-    // this is what shows which stats the new mechanics really set.
-    public static string DescribeRelevant(GameController game)
+    // Every beast or thread stat on the map with its value. Since 3.30 these carry the combined
+    // effect of the atlas and the Threads, so they describe the map without the atlas tree.
+    // Empty while the stat table is unavailable.
+    public static Dictionary<string, int> ReadRelevant(GameController game)
     {
+        var result = new Dictionary<string, int>(StringComparer.Ordinal);
         var stats = game?.IngameState?.Data?.MapStats;
-        if (stats == null) return string.Empty;
+        if (stats == null) return result;
 
-        return string.Join(", ", stats
-            .Where(s => s.Key.ToString() is var name &&
-                        (name.Contains("Beast") || name.Contains("Bestiary") || name.Contains("Thread")))
-            .Select(s => $"{s.Key}={s.Value}"));
+        foreach (var s in stats)
+        {
+            var name = s.Key.ToString();
+            if (name.Contains("Beast") || name.Contains("Bestiary") || name.Contains("Thread"))
+                result[name] = s.Value;
+        }
+
+        return result;
     }
+
+    // The same stats as one line, for the log.
+    public static string DescribeRelevant(GameController game) =>
+        string.Join(", ", ReadRelevant(game).Select(s => $"{s.Key}={s.Value}"));
 
     // Reads both stats at once, or null while the table is unavailable.
     // The table is checked for content first, and that is the point: a stat is absent rather

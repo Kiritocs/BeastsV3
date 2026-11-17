@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Threading.Tasks;
 using BeastsV3.Shared;
 
 namespace BeastsV3.Analytics;
@@ -26,6 +27,25 @@ public sealed class SessionStore
     private readonly string _namedDir;
     private readonly string _autoSaveDir;
 
+    // The file each session's autosave was last written to. Saves run every few seconds, so
+    // reading every autosave back to find the previous one would cost a full parse each time.
+    private readonly Dictionary<string, string> _lastAutoSavePath = new(StringComparer.OrdinalIgnoreCase);
+
+    // When each session's newest written autosave was taken, so a slower, older one cannot
+    // replace it.
+    private readonly Dictionary<string, DateTime> _lastAutoSaveAtUtc = new(StringComparer.OrdinalIgnoreCase);
+
+    // Writes and trims run under this lock, so a background autosave and a direct one never
+    // touch the same files at once.
+    private readonly object _writeLock = new();
+
+    // Background autosaves: only the newest queued one is written; an older one still waiting
+    // is dropped, since the newer one holds everything it had.
+    private readonly object _queueLock = new();
+    private SavedSessionData _queuedAutoSave;
+    private bool _draining;
+    private Task _drainTask = Task.CompletedTask;
+
     public SessionStore()
     {
         var baseDir = Path.Combine(Directory.GetCurrentDirectory(), "config", "BeastsV3Sessions");
@@ -39,31 +59,100 @@ public sealed class SessionStore
     // Trims autosaves in both stores to the configured limits.
     public void EnsureAutoSaveMaintenance()
     {
-        TrimAutoSaves(_namedDir);
-        TrimAutoSaves(_autoSaveDir);
+        lock (_writeLock)
+        {
+            TrimAutoSaves(_namedDir);
+            TrimAutoSaves(_autoSaveDir);
+        }
     }
 
     // Writes a named save.
-    public bool SaveNamed(SavedSessionData data) => TrySave(_namedDir, data, isAutoSave: false);
+    public bool SaveNamed(SavedSessionData data)
+    {
+        lock (_writeLock) return TrySave(_namedDir, data, isAutoSave: false, out _);
+    }
 
-    // Writes an autosave, replacing any prior one for the same session (one file per session).
+    // Writes an autosave on a background thread. Serialising and writing a long session takes
+    // 10-20 ms, which on the render thread is a visible hitch every save. The caller must hand
+    // over data it no longer changes (BuildSavedSessionData copies everything).
+    public void QueueAutoSave(SavedSessionData data)
+    {
+        if (data == null) return;
+        lock (_queueLock)
+        {
+            _queuedAutoSave = data;
+            if (_draining) return;
+            _draining = true;
+            _drainTask = Task.Run(DrainAutoSaves);
+        }
+    }
+
+    private void DrainAutoSaves()
+    {
+        while (true)
+        {
+            SavedSessionData next;
+            lock (_queueLock)
+            {
+                next = _queuedAutoSave;
+                _queuedAutoSave = null;
+                if (next == null)
+                {
+                    _draining = false;
+                    return;
+                }
+            }
+
+            try { SaveAutoSave(next); }
+            catch (Exception ex) { Log.Error("Background autosave failed", ex); }
+        }
+    }
+
+    // Waits for a background autosave still being written, e.g. before the plugin unloads.
+    public void WaitForQueuedAutoSaves(TimeSpan timeout)
+    {
+        Task task;
+        lock (_queueLock) task = _drainTask;
+        try { task.Wait(timeout); }
+        catch (Exception ex) { Log.Debug($"Waiting for the background autosave failed: {ex.Message}"); }
+    }
+
+    // Writes an autosave now, replacing any prior one for the same session (one file per session).
+    // A queued background autosave is older than this one and is dropped.
     public bool SaveAutoSave(SavedSessionData data)
     {
-        var previousForSession = data == null
-            ? Array.Empty<SessionFileEntry>()
+        if (data == null) return false;
+        lock (_queueLock)
+        {
+            if (_queuedAutoSave != null && _queuedAutoSave.SavedAtUtc <= data.SavedAtUtc) _queuedAutoSave = null;
+        }
+
+        lock (_writeLock) return WriteAutoSave(data);
+    }
+
+    private bool WriteAutoSave(SavedSessionData data)
+    {
+        // A background save that was already under way when a newer direct save was written.
+        if (_lastAutoSaveAtUtc.TryGetValue(data.SessionId, out var newest) && data.SavedAtUtc < newest) return true;
+
+        var previousForSession = _lastAutoSavePath.TryGetValue(data.SessionId, out var known)
+            ? [known]
             : ReadAll(_autoSaveDir)
                 .Where(x => x.Data.IsAutoSave)
                 .Where(x => IdEquals(x.Data.SessionId, data.SessionId))
+                .Select(x => x.FullPath)
                 .ToArray();
 
-        var ok = TrySave(_autoSaveDir, data, isAutoSave: true);
-        if (ok)
+        if (!TrySave(_autoSaveDir, data, isAutoSave: true, out var path)) return false;
+
+        _lastAutoSavePath[data.SessionId] = path;
+        _lastAutoSaveAtUtc[data.SessionId] = data.SavedAtUtc;
+        foreach (var previous in previousForSession)
         {
-            foreach (var entry in previousForSession)
-                TryDeleteFile(entry.FullPath);
-            EnsureAutoSaveMaintenance();
+            if (!string.Equals(previous, path, StringComparison.OrdinalIgnoreCase)) TryDeleteFile(previous);
         }
-        return ok;
+        EnsureAutoSaveMaintenance();
+        return true;
     }
 
     // Returns all saves from both stores, newest first and deduped by save id.
@@ -95,9 +184,11 @@ public sealed class SessionStore
 
     // ---- private ----------------------------------------------------------
 
-    // Serialises a save to a timestamped file, appending a suffix on name collisions.
-    private static bool TrySave(string directory, SavedSessionData data, bool isAutoSave)
+    // Serialises a save to a timestamped file, appending a suffix on name collisions. Written
+    // to a temporary name first, so a crash mid-write never leaves a cut-off save behind.
+    private static bool TrySave(string directory, SavedSessionData data, bool isAutoSave, out string path)
     {
+        path = null;
         if (data == null || string.IsNullOrWhiteSpace(directory)) return false;
         if (!IsValidId(data.SaveId) || !IsValidId(data.SessionId)) return false;
 
@@ -112,7 +203,7 @@ public sealed class SessionStore
             }
 
             var candidate = BuildFileName(data.SavedAtUtc, slug);
-            var path = Path.Combine(directory, candidate);
+            path = Path.Combine(directory, candidate);
             var suffix = 1;
             while (File.Exists(path))
             {
@@ -120,7 +211,9 @@ public sealed class SessionStore
                 path = Path.Combine(directory, candidate);
             }
 
-            File.WriteAllText(path, JsonSerializer.Serialize(data, JsonOptions));
+            var temp = path + ".tmp";
+            File.WriteAllText(temp, JsonSerializer.Serialize(data, JsonOptions));
+            File.Move(temp, path);
             return true;
         }
         catch (Exception ex)

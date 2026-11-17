@@ -10,6 +10,7 @@ public enum AreaTransitionKind
     EnteredNonTrackableArea,
     ReenteredFinalizedMap,
     ReenteredActiveMap,
+    EnteredSideZone,
     EnteredNewTrackableMap,
 }
 
@@ -46,6 +47,7 @@ public sealed class AreaTransitions
 
         if (!GameHelpers.IsRunnableMap(area)) return LeaveTrackableArea(move, hasCurrentMapProgress);
         if (IsSameArea(move)) return ReenterSameMap(move);
+        if (IsSideZone(move)) return EnterSideZone(move);
         return EnterNewMap(move, hasCurrentMapProgress);
     }
 
@@ -72,8 +74,38 @@ public sealed class AreaTransitions
         return hashMatches || instanceMatches;
     }
 
-    // Stepped out of a map: hideout, town or a side zone. The map is only banked when it was
-    // already complete.
+    // A key for remembering an area: its hash, else its instance id, else none.
+    private static string AreaKey(string hash, int instanceId) =>
+        !string.IsNullOrWhiteSpace(hash) ? hash : instanceId >= 0 ? "instance:" + instanceId : null;
+
+    // A side zone of the active map: entered straight from the map (or another of its side
+    // zones), or one already known, e.g. returned to through a portal from the hideout. A map
+    // cannot be entered straight from another map, so a direct step is always a side zone.
+    private bool IsSideZone(AreaMove move)
+    {
+        if (string.IsNullOrWhiteSpace(_state.ActiveMapAreaHash) && _state.ActiveMapInstanceId < 0) return false;
+
+        var key = AreaKey(move.NewHash, move.NewInstanceId);
+        if (key != null && _state.ActiveMapSideZones.Contains(key)) return true;
+
+        return _state.IsCurrentAreaTrackable || _state.IsInFinalizedMap || _state.IsInSideZone;
+    }
+
+    // Entered a side zone: the map stays the active one, neither banked nor restarted. Its clock
+    // runs as in the map itself, unless the map is already banked.
+    private AreaTransitionDecision EnterSideZone(AreaMove move)
+    {
+        var key = AreaKey(move.NewHash, move.NewInstanceId);
+        if (key != null) _state.ActiveMapSideZones.Add(key);
+
+        _state.IsInSideZone = true;
+        _state.IsCurrentAreaTrackable = !_state.MapWasFinalized;
+        _state.IsInFinalizedMap = _state.MapWasFinalized;
+
+        return move.Decide(AreaTransitionKind.EnteredSideZone, false);
+    }
+
+    // Stepped out of a map: hideout or town. The map is only banked when it was already complete.
     private AreaTransitionDecision LeaveTrackableArea(AreaMove move, bool hasCurrentMapProgress)
     {
         var shouldFinalize = _state.CurrentMapWasComplete &&
@@ -81,6 +113,7 @@ public sealed class AreaTransitions
 
         _state.IsCurrentAreaTrackable = false;
         _state.IsInFinalizedMap = false;
+        _state.IsInSideZone = false;
         if (_state.CurrentMapWasComplete)
         {
             _state.MapWasFinalized = true;
@@ -97,6 +130,7 @@ public sealed class AreaTransitions
         _state.ActiveMapAreaHash = move.NewHash;
         _state.ActiveMapAreaName = move.NewName;
         _state.ActiveMapInstanceId = move.NewInstanceId;
+        _state.IsInSideZone = false;
 
         if (_state.MapWasFinalized)
         {
@@ -119,6 +153,8 @@ public sealed class AreaTransitions
 
         _state.MapWasFinalized = false;
         _state.IsInFinalizedMap = false;
+        _state.IsInSideZone = false;
+        _state.ActiveMapSideZones.Clear();
         _state.ActiveMapAreaHash = move.NewHash;
         _state.ActiveMapAreaName = move.NewName;
         _state.ActiveMapInstanceId = move.NewInstanceId;

@@ -1,70 +1,69 @@
 # Beasts V3
 
-Bestiary farming plugin for **ExileCore / PoeHelper** (Path of Exile 1). Tracks beast spawns,
-prices them from poe.ninja, records per-map analytics, and automates the tedious half of a run -
-itemizing, stashing, restocking and listing to Faustus.
+Bestiary farming plugin for **ExileCore / PoeHelper** (Path of Exile 1). It marks and prices red
+beasts, shows what your Bestiary Threads rolled, tracks profit per map, and automates restocking,
+loading the Map Device, itemizing and listing at Faustus.
 
-> **Automation drives the real game UI**, moving your cursor and sending clicks and keys.
-> Everything ships disabled with no hotkeys bound; nothing runs until you set it up.
+> **Automation moves your cursor and sends clicks and keys to the game.** It ships switched off
+> with no hotkeys bound.
 
-## Install
+**Requires the English game client.**
 
-**PluginUpdater** - `Add` tab → paste `https://github.com/Kiritocs/BeastsV3` → `Clone` → restart
-ExileApi (or `Core` settings → `Reload Plugins`).
+## First-time setup
 
-**From source** - drop the `BeastsV3` folder into `Plugins/Source/`, launch ExileApi, let it
-compile, enable **Beasts V3**.
+Everything is in the plugin's settings menu. Do the steps in order.
 
-## First run
+1. **Enable** the plugin.
+2. **Tracking: Prices** - press **Refresh Prices**, then **Select Tracked Beasts >=15c** (or tick
+   beasts yourself).
+3. **Automation: Panic Stop** - bind it. It stops any run at once.
+4. Match two keys to your game keybinds:
+   - **Automation: Bestiary → Challenges Window Hotkey**
+   - **Automation: Restock → Inventory Toggle Hotkey**
+5. Open your stash once, then set **Automation: Bestiary → Itemized Beasts Stash Tabs**.
+6. **Automation: Restock**:
+   - **Map Target** - **Item Name** (e.g. `Map (Tier 16)`), **Quantity**, **Stash Tab**.
+   - **Selected Atlas Map** - the map to run.
+   - **Middle Thread Slot** - **Thread** `Bestiary Thread` and a **Count**.
+7. Talk to Faustus once, then set **Automation: Faustus → Faustus Shop Tabs**.
+8. Bind the **Restock**, **Load Map Device**, **Regex Itemize** and **Faustus List** hotkeys.
 
-1. **Tracking: Prices** - leave **Auto Sync League** on, press **Refresh Prices**, then pick beasts.
-   **Select Tracked Beasts >=15c** is a good start.
-2. **Overlays** - turn on what you want. They hide themselves in town, hideout and behind
-   fullscreen panels.
-3. **Automation** - last. Bind **one** hotkey, watch a full run, then bind more.
+## Your first map
 
-Before you bind anything:
+1. Open your stash and press **Restock**.
+2. Open the Map Device and press **Load Map Device**. Start the map yourself.
+3. Capture the red beasts. The overlays show them, the Thread effects and which tracked beasts
+   can be in the map.
+4. In your hideout, press **Regex Itemize**, then **Faustus List**.
 
-- **Panic Stop** halts any run instantly. Bind it first.
-- **Bestiary → Challenges Window Hotkey** must match your in-game Challenges keybind, or the
-  Bestiary panel can't be opened outside the Menagerie.
-- **Itemized Beasts Stash Tabs** must be set before auto-stash does anything - with none set it is
-  skipped rather than guessing.
-- **Lock User Input During Automation** (on by default) suppresses your mouse and keyboard mid-run;
-  hotkeys still get through.
+Watch one full run before you trust it. **Automation: Full Sequence** does step 4 with one key.
 
-## What it does
+Also included: profit analytics with a local dashboard (`http://localhost:18422`, nothing is sent
+anywhere) and an experimental exploration route. Every overlay can be moved or switched off.
 
-| | |
+## Troubleshooting
+
+When a run stops, the message at the top of the screen names the failed step. The same line is in
+`config/BeastsV3Logs/BeastsV3.log`.
+
+| Problem | Fix |
 |---|---|
-| **Tracking** | World labels and map markers for tracked beasts, with capture state and talismans. |
-| **Prices** | poe.ninja fetch with auto-refresh, plus price overlays in inventory, stash, merchant and Bestiary panels. |
-| **Counter** | Beast count and map completion, on screen. |
-| **Analytics** | Per-map and per-session records - cost, yield, atlas tree - autosaved, with a local dashboard. |
-| **Automation** | Regex itemize, delete, auto-stash, Faustus listing, map device load, restock, and a one-key full sequence. |
-| **Route** | *Experimental.* A route covering every beast spawn. Off by default. |
-
-## Privacy
-
-The dashboard is a local server on `http://localhost:18422`, localhost-only, and can be turned off.
-
-**Community Data Sharing - please leave it off for now.** It is off by default and nothing is sent
-unless you turn it on. I'll announce shortly what it collects and what it is for.
+| A hotkey does nothing | Enable the plugin and bind the hotkey. |
+| Bestiary panel does not open | **Challenges Window Hotkey** differs from your game key. |
+| Itemized beasts stay on the ground | **Inventory Toggle Hotkey** differs from your game key. |
+| Beasts are not stashed | Set **Itemized Beasts Stash Tabs**. Open your stash once to fill the list. |
+| Restock fails | Open the stash first and set **Map Target → Stash Tab**. |
+| Load Map Device fails | Stand next to the Map Device. A slot on `Leave as is` is not touched. |
+| No Faustus tabs to pick | Talk to Faustus once. |
+| Counter or Thread slots do not work | The game client is not in English. |
+| Mouse and keyboard are blocked | **Lock User Input During Automation** does that. Press Panic Stop. |
+| Broken after a game patch | Wait for an ExileCore and plugin update. |
 
 ## Reporting a bug
 
-1. Reproduce it.
-2. Press **Diagnostics: Log File → Dump Diagnostics** (bind its hotkey - the useful moment is
-   usually mid-run). It records build, non-default settings, area, tracker state, map cost and
-   which UI panels were reachable.
-3. **Open Log Folder** → attach `BeastsV3.log`, plus `BeastsV3.prev.log` if the issue predates a
-   rollover. Logs live in `config/BeastsV3Logs/` and roll at 8 MB.
-
-Include what you were doing, what you expected, and whether automation was running.
-
-## Limitations
-
-- Path of Exile 1 only - not a PoE 2 plugin.
-- Automation reads and clicks the real UI, so a patch that moves panels can break it.
-- Prices lag the market and depend on poe.ninja being up.
-- The exploration route is experimental and picks poor routes in unusual layouts.
+1. Reproduce it, then press **Diagnostics: Log File → Dump Diagnostics**.
+2. Press **Open Log Folder** and attach `BeastsV3.log`.
+3. Send it with what you did and expected, any of these ways:
+   - Message me on Discord: [kirito2769](https://discord.com/users/210910788557340672)
+   - The [Discord thread](https://discord.com/channels/1315088615071678535/1492696960715456666)
+   - A [GitHub issue](https://github.com/Kiritocs/BeastsV3/issues)

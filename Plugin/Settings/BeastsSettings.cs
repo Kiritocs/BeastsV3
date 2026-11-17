@@ -30,6 +30,9 @@ public class BeastsSettings : ISettings
     [Menu("Overlays: Thread Effects", "Lists the Bestiary Thread count and every beast effect on the current map, with a short description of each.")]
     public ThreadEffectsSettings ThreadEffects { get; set; } = new() { XPos = new(1, 0, 100), YPos = new(30, 0, 100) };
 
+    [Menu("Overlays: Possible Beasts", "Lists which of your tracked beasts the current map can contain, from the moment it has loaded.")]
+    public PossibleBeastsSettings PossibleBeasts { get; set; } = new() { XPos = new(1, 0, 100), YPos = new(62, 0, 100) };
+
     [Menu("Overlays: Automation Status", "Automation status message shown at the top of the screen while running.")]
     public AutomationStatusOverlaySettings AutomationStatus { get; set; } = new();
 
@@ -146,17 +149,14 @@ public class BeastPricesSettings
     [JsonIgnore]
     public CustomNode BeastPicker { get; set; } = new();
 
-    // Persisted by PriceService rather than by the host serializer.
-    [JsonIgnore]
-    public string LastUpdated { get; set; } = "never";
+    // Internal so the host saves them with the settings without drawing them in its menu.
+    [JsonProperty] internal string LastUpdated { get; set; } = "never";
 
-    [JsonIgnore]
-    public HashSet<string> EnabledBeasts { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    [JsonProperty] internal HashSet<string> EnabledBeasts { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     // Beasts selected for their talisman only; kept separate from EnabledBeasts so capture
     // and itemize logic never sees them.
-    [JsonIgnore]
-    public HashSet<string> EnabledTalismans { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    [JsonProperty] internal HashSet<string> EnabledTalismans { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
 [Submenu(CollapsedByDefault = true)]
@@ -464,13 +464,13 @@ public class RestockSettings
 
     [JsonProperty] internal TextNode SelectedMapToRun { get; set; } = new("open Map");
 
-    [Menu("Inventory Toggle Hotkey", "Must match your PoE inventory keybind (default I). Used to close inventory before scanning the Atlas.")]
+    [Menu("Inventory Toggle Hotkey", "Must match your PoE inventory keybind (default I). Used to close the inventory before scanning the Atlas, and to reopen it after picking up itemized beasts.")]
     public HotkeyNodeV2 InventoryToggleHotkey { get; set; } = new(System.Windows.Forms.Keys.I);
 
     [Menu("Auto-Restock Missing Map Device Items", "When Map Device load finds a target short across the device slots, device storage and inventory, run Restock first instead of loading a partial device.")]
     public ToggleNode AutoRestockMissingMapDeviceItems { get; set; } = new(true);
 
-    [Menu("Clear Non-Target Map Device Items", "Before loading, ctrl-click anything in the Map Device slots that isn't one of your targets back into inventory, and trim a target spread over more slots than its quantity asks for. Off leaves it in place, and a target with no free slot fails instead.")]
+    [Menu("Clear Non-Target Map Device Items", "Before loading, ctrl-click a map in the Map Device that isn't your Map Target back into inventory. Off leaves it in place, and the load fails if the slot is taken.")]
     public ToggleNode ClearNonTargetMapDeviceItems { get; set; } = new(true);
 
     [Menu("Enable Map Regex Filter", "Before pulling a 'Map (Tier N)' target, paste the pattern below into the map-stash search bar and take only highlighted matches. Applies to map targets only - other targets are untouched.")]
@@ -528,7 +528,7 @@ public class RestockTargetSettings
     [Menu("Item Name", "Exact base item name (e.g. 'Map (Tier 16)').")]
     public TextNode ItemName { get; set; } = new(string.Empty);
 
-    [Menu("Quantity", "Target total in inventory (0-100). Restock tops up to this amount. Amounts above one stack are fine - they spill into more inventory cells and, in the Map Device, into more slots.")]
+    [Menu("Quantity", "Target total in inventory (0-100). Restock tops up to this amount.")]
     public RangeNode<int> Quantity { get; set; } = new(20, 0, MaxQuantity);
 
     [Menu("Stash Tab", "Pick the stash tab that holds this item. Open your stash in-game to populate the list.")]
@@ -1149,7 +1149,7 @@ public class TelemetrySettings
     public CustomNode StatusBanner { get; set; } = new();
 
     [Menu("Preview Submission",
-        "Write the exact JSON that would be uploaded to config/BeastsV3TelemetryPreview.json and open it. " +
+        "Write the exact JSON that would be uploaded to config/BeastsV3Logs/TelemetryPreview.json and open it. " +
         "Works whether or not sharing is enabled.")]
     public ButtonNode PreviewSubmission { get; set; } = new();
 
@@ -1246,6 +1246,18 @@ public class ThreadEffectsSettings : AnalyticsOverlaySettings
 
     // Stat name -> mode, only for effects the user changed from the plugin's default.
     [JsonProperty] internal Dictionary<string, string> EffectModes { get; set; } = new(StringComparer.Ordinal);
+}
+
+public class PossibleBeastsSettings : AnalyticsOverlaySettings
+{
+    [Menu("Possible Color", "Color of a beast that can be in the map and has not been seen yet. The game loads a few more species than it spawns, so some of these will not appear. The numbers behind a beast say how often it really was there in the maps that listed it, counted from your own maps in which you found every red beast.")]
+    public ColorNode PossibleColor { get; set; } = new(new Color(235, 200, 110, 255));
+
+    [Menu("Found Color", "Color of a beast that has been seen in the map, and of the Black Mórrigan when the map says it holds one.")]
+    public ColorNode FoundColor { get; set; } = new(new Color(110, 220, 110, 255));
+
+    [Menu("None Color", "Color of the line shown when none of your tracked beasts can be in the map.")]
+    public ColorNode NoneColor { get; set; } = new(new Color(235, 95, 95, 255));
 }
 
 [Submenu(CollapsedByDefault = true)]

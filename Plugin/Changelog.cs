@@ -25,6 +25,8 @@ public static class Changelog
             "Analytics and the web dashboard are back and switched on again. Turn them off under Analytics if you do not want them.",
             "Restock has a single Map Target now. Your old restock targets were reset: set the map and its stash tab again.",
             "New: Left, Middle and Right Thread Slot settings. Load Map Device sets each slot's thread and count (1-8), clears it, or leaves it alone."),
+        new(2026, 11, 17, 1,
+            "New overlay: Possible Beasts. As soon as you enter a map it lists which of your tracked beasts the map can contain, and says so when none can. A listed beast is possible, not certain, so each one shows how often it really was there in your earlier maps that listed it; a beast that is not listed is not in the map."),
         new(2026, 8, 23, 1,
             "Map Device load: a quantity of two stacks now keeps two slots filled.",
             "Map Device load: slots beyond what your quantity asks for go back to your inventory.",

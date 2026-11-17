@@ -26,6 +26,12 @@ public sealed class SessionState
     // True while inside a re-entered map that was already banked to Map History.
     public bool IsInFinalizedMap { get; set; }
 
+    // Side zones of the active map: areas entered straight from it, with no town or hideout in
+    // between (boss arenas, Abyssal Depths, ...). They belong to the map, so its clock keeps
+    // running there. Kept by hash, so a side zone re-entered through a portal is known again.
+    public bool IsInSideZone { get; set; }
+    public HashSet<string> ActiveMapSideZones { get; } = new(StringComparer.Ordinal);
+
     public DateTime? CurrentMapStartUtc { get; set; }
     public TimeSpan CurrentMapElapsed { get; set; }
     public int CurrentMapBeastsFound { get; set; }

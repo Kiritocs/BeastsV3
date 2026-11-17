@@ -19,11 +19,8 @@ namespace BeastsV3.Analytics;
 //   4. Never disruptive: a failed upload is logged at debug level and forgotten.
 public sealed class TelemetryUploader
 {
-    // Bumped with MapAnalyticsRecord.CurrentSchemaVersion; the server rejects unknown versions.
-    private const int PayloadSchemaVersion = 2;
-
     private const int MaxBatchSize = 50;
-    private const string InstallIdFileName = "BeastsV3_installId.txt";
+    private const string InstallIdKey = "installId";
 
     // The collector URL, XOR-obscured to keep it out of trivial repo scrapes rather than to
     // hide where data goes: it decodes at runtime, and Preview Submission shows the exact
@@ -72,7 +69,7 @@ public sealed class TelemetryUploader
 
     public int PendingCount => _pending.Count;
 
-    // A random per-install id, stored with the settings. Never derived from an account,
+    // A random per-install id, kept in the plugin's data file. Never derived from an account,
     // character or machine, and resettable.
     public string InstallId
     {
@@ -80,21 +77,8 @@ public sealed class TelemetryUploader
         {
             if (!string.IsNullOrEmpty(_installId)) return _installId;
 
-            var path = GetInstallIdPath();
-            try
-            {
-                if (File.Exists(path))
-                {
-                    var existing = File.ReadAllText(path).Trim();
-                    if (IsValidInstallId(existing)) return _installId = existing;
-                }
-            }
-            catch (Exception ex)
-            {
-                Log.Debug($"Could not read install id. {ex.GetType().Name}: {ex.Message}");
-            }
-
-            return _installId = ResetInstallId();
+            var existing = PluginData.Get<string>(InstallIdKey);
+            return _installId = IsValidInstallId(existing) ? existing : ResetInstallId();
         }
     }
 
@@ -102,16 +86,7 @@ public sealed class TelemetryUploader
     public string ResetInstallId()
     {
         var id = Guid.NewGuid().ToString("N");
-        try
-        {
-            var path = GetInstallIdPath();
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllText(path, id);
-        }
-        catch (Exception ex)
-        {
-            Log.Debug($"Could not persist install id. {ex.GetType().Name}: {ex.Message}");
-        }
+        PluginData.Set(InstallIdKey, id);
         return _installId = id;
     }
 
@@ -220,8 +195,12 @@ public sealed class TelemetryUploader
     // Writes a preview file and returns its path.
     public string WritePreviewFile(IEnumerable<MapAnalyticsRecord> records)
     {
-        var path = Path.Combine(
-            Directory.GetCurrentDirectory(), "config", "BeastsV3TelemetryPreview.json");
+        var config = Path.Combine(Directory.GetCurrentDirectory(), "config");
+        var path = Path.Combine(config, "BeastsV3Logs", "TelemetryPreview.json");
+
+        // Where the preview used to be written.
+        var oldPath = Path.Combine(config, "BeastsV3TelemetryPreview.json");
+        if (File.Exists(oldPath)) File.Delete(oldPath);
 
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, BuildPreviewJson(records));
@@ -236,7 +215,8 @@ public sealed class TelemetryUploader
         InstallId = InstallId,
         Maps = records.Select(r => new TelemetryMap
         {
-            SchemaVersion = PayloadSchemaVersion,
+            // The record's own version: the server treats 2 (before 3.30) and 3 differently.
+            SchemaVersion = r.SchemaVersion,
             MapId = r.MapId,
             League = r.League,
             GameVersion = r.GameVersion,
@@ -250,6 +230,8 @@ public sealed class TelemetryUploader
             Scarabs = r.ScarabNames ?? [],
             MapAdditionalRedBeasts = r.MapAdditionalRedBeasts,
             MapDuplicateCapturedBeastsChancePct = r.MapDuplicateCapturedBeastsChancePct,
+            MapStats = r.MapStats ?? new(),
+            QuestRedBeastsTotal = r.QuestRedBeastsTotal,
             Beasts = (r.BeastBreakdown ?? [])
                 .Where(b => b.Count > 0 && !string.IsNullOrWhiteSpace(b.BeastName))
                 .Select(b => new TelemetryBeast { Name = b.BeastName, Count = b.Count })
@@ -264,9 +246,6 @@ public sealed class TelemetryUploader
     // The collector every upload posts to, so the preview can name the destination as well as
     // the payload.
     public static string EndpointUrl => DecodeEndpoint();
-
-    private static string GetInstallIdPath() =>
-        Path.Combine(Directory.GetCurrentDirectory(), "config", "global", InstallIdFileName);
 
     private static bool IsValidInstallId(string value) =>
         !string.IsNullOrWhiteSpace(value) &&
@@ -300,6 +279,8 @@ public sealed class TelemetryUploader
         public string[] Scarabs { get; set; } = [];
         public int? MapAdditionalRedBeasts { get; set; }
         public int? MapDuplicateCapturedBeastsChancePct { get; set; }
+        public Dictionary<string, int> MapStats { get; set; } = new();
+        public int? QuestRedBeastsTotal { get; set; }
         public TelemetryBeast[] Beasts { get; set; } = [];
     }
 

@@ -45,6 +45,9 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
     private AreaTransitions _areaTransitions;
     private AnalyticsOverlay _analyticsOverlay;
     private ThreadEffectsOverlay _threadEffectsOverlay;
+    private MapBeastPreloads _beastPreloads;
+    private PreloadRecord _preloadRecord;
+    private PossibleBeastsOverlay _possibleBeastsOverlay;
     private TelemetryUploader _telemetry;
 
     private WorldLabels _worldLabels;
@@ -148,7 +151,7 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
 
     private void CreateTracking(Func<bool> isInFinalizedMap, Func<bool> hideBeastOverlay)
     {
-        _prices = new PriceService(Settings, () => GameHelpers.TryGetServerLeague(GameController));
+        _prices = new PriceService(Settings, () => GameHelpers.TryGetServerLeague(GameController), _SaveSettings);
         _tracker = new BeastTracker(GameController, Settings);
         _heartbeat = new DetectionHeartbeat(GameController, Settings, _tracker);
         _pricePanel = new PricePanel(Settings, _prices);
@@ -164,10 +167,15 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
         // A getter, not the current value: _telemetry is assigned below, Render() runs later.
         _analyticsOverlay = new AnalyticsOverlay(GameController, Settings, _recorder, () => _telemetry);
         _threadEffectsOverlay = new ThreadEffectsOverlay(GameController, Settings);
+        _beastPreloads = new MapBeastPreloads(GameController);
+        _preloadRecord = new PreloadRecord();
+        _possibleBeastsOverlay = new PossibleBeastsOverlay(
+            GameController, Settings, _beastPreloads, _preloadRecord, _prices, _recorder.State);
 
         // Opt-in telemetry. Enqueue does nothing with sharing off, so subscribing is safe.
         _telemetry = new TelemetryUploader(Settings);
         _recorder.MapFinalized += OnMapFinalizedForTelemetry;
+        _recorder.MapFinalized += OnMapFinalizedForPreloadRecord;
     }
 
     private void CreateRenderers(Func<bool> hideBeastOverlay)
@@ -242,7 +250,7 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
             _sessionStore.EnsureAutoSaveMaintenance();
         }
 
-        InitializeCurrentAreaTracking(DateTime.UtcNow);
+        if (!TryResumeSession(DateTime.UtcNow)) InitializeCurrentAreaTracking(DateTime.UtcNow);
 
         WireSettingsButtons();
 
@@ -327,16 +335,17 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
     private void ShutDownServices()
     {
         TaskScheduler.UnobservedTaskException -= OnUnobservedTaskException;
-        _prices?.SavePersisted();
         if (Settings?.Analytics?.Enable?.Value == true && _recorder != null &&
             (_recorder.State.MapHistory.Count > 0 || _recorder.State.SessionBeastsFound > 0))
         {
             _recorder.AutoSave();
         }
+        _sessionStore?.WaitForQueuedAutoSaves(TimeSpan.FromSeconds(2));
         _webHost?.DisposeServer();
         _inputLock?.Dispose();
 
         if (_recorder != null) _recorder.MapFinalized -= OnMapFinalizedForTelemetry;
+        if (_recorder != null) _recorder.MapFinalized -= OnMapFinalizedForPreloadRecord;
         _recorder?.Detach();
 
         // Last chance to send anything queued. Not awaited - OnClose must not block the host.
@@ -357,6 +366,10 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
         _areaTransitions = null;
         _analyticsOverlay = null;
         _threadEffectsOverlay = null;
+        _beastPreloads?.Clear();
+        _beastPreloads = null;
+        _preloadRecord = null;
+        _possibleBeastsOverlay = null;
         _telemetry = null;
         _worldLabels = null;
         _mapOverlay = null;
@@ -424,6 +437,15 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
 
             _recorder?.OnAreaTransition(decision, now);
         }
+
+        // The map's possible beasts: read on entering a new map, kept while in its side zones
+        // and on the way back in, read again when the first try did not finish.
+        if (Settings.PossibleBeasts.Show.Value)
+        {
+            if (startingNewMap && GameHelpers.IsRunnableMap(area)) _beastPreloads?.StartNewMap();
+            else if (decision?.Kind == AreaTransitionKind.ReenteredActiveMap) _beastPreloads?.EnsureRead();
+            else if (startingNewMap) _beastPreloads?.Clear();
+        }
     }
 
     private static string Describe(string value) => string.IsNullOrWhiteSpace(value) ? "(empty)" : value;
@@ -446,6 +468,7 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
 
             Diagnostics.DumpSnapshot(GameController, Settings,
                 ("Area trackable", $"{state?.IsCurrentAreaTrackable}"),
+                ("Side zone", $"{state?.IsInSideZone} ({state?.ActiveMapSideZones.Count ?? 0} known)"),
                 ("In finalized map", $"{state?.IsInFinalizedMap}"),
                 ("Map was complete", $"{state?.CurrentMapWasComplete}"),
                 ("Map elapsed", $"{state?.CurrentMapElapsed}"),
@@ -493,7 +516,8 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
 
         if (Settings.Analytics.Enable.Value)
         {
-            if (_recorder.State.IsCurrentAreaTrackable) _cost.LatchMapModifiers(now);
+            // A side zone has its own stat table; the map's are read in the map itself.
+            if (_recorder.State.IsCurrentAreaTrackable && !_recorder.State.IsInSideZone) _cost.LatchMapModifiers(now);
 
             _cost.MaybePoll(now);
             _recorder.Tick(now);
@@ -510,6 +534,7 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
         _pricePanels.Render();
         _analyticsOverlay.Render();
         _threadEffectsOverlay.Render();
+        _possibleBeastsOverlay.Render();
         _automationStatusOverlay.Render();
         _quickButtons.Render();
         _clipboardAutoPaste.Tick();
@@ -573,6 +598,31 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
             _recorder.ResetSession(now, startNewCurrentMapTimer: false);
         }
         _analyticsEnabledLastFrame = enabled;
+    }
+
+    // An autosave older than this is a finished session, not one interrupted by a reload or crash.
+    private static readonly TimeSpan ResumeWindow = TimeSpan.FromMinutes(30);
+
+    // Carries on with the newest autosave when it is recent, so reloading the plugin or a crash
+    // neither starts a new session nor loses the map being run. The current area is then
+    // replayed as an area change: the same instance resumes its map, another map banks it.
+    private bool TryResumeSession(DateTime nowUtc)
+    {
+        if (!Settings.Analytics.Enable.Value) return false;
+
+        var latest = _sessionStore.ListAll().FirstOrDefault(x => x.Data.IsAutoSave);
+        if (latest == null || nowUtc - latest.Data.SavedAtUtc > ResumeWindow) return false;
+        if (!_recorder.Resume(latest.Data, nowUtc)) return false;
+
+        var map = latest.Data.CurrentMap;
+        Log.Info($"Session resumed from {latest.FileName}: {_recorder.State.CompletedMapCount} map(s), " +
+                 (map == null ? "no map in progress" :
+                     $"map '{map.AreaName}' {(map.IsFinalized ? "banked" : $"{map.ElapsedSeconds:0}s, {map.BeastsFound} beast(s)")}") +
+                 $", saved {(nowUtc - latest.Data.SavedAtUtc).TotalSeconds:0}s ago.");
+
+        var current = GameController?.Area?.CurrentArea;
+        if (current != null) AreaChange(current);
+        return true;
     }
 
     private void InitializeCurrentAreaTracking(DateTime nowUtc)
@@ -645,6 +695,11 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
     }
 
     // Queues a completed map for upload. A no-op unless sharing is enabled.
+    // A map is banked before the next one's beasts are read (see AreaChange), so what is
+    // loaded here still belongs to the map being banked.
+    private void OnMapFinalizedForPreloadRecord(MapAnalyticsRecord record) =>
+        _preloadRecord?.Add(record, _beastPreloads?.Possible);
+
     private void OnMapFinalizedForTelemetry(MapAnalyticsRecord record)
     {
         _telemetry?.Enqueue(record);
@@ -753,6 +808,7 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
         {
             if (!IsShiftHeld()) { Log.Info("Reset Session: hold Shift and click to confirm."); return; }
             _recorder.ResetSession(DateTime.UtcNow, startNewCurrentMapTimer: true);
+            _recorder.AutoSave(evenIfEmpty: true, inBackground: true);
             Log.Info("Session reset.");
         };
         Settings.Analytics.ResetMapAverage.OnPressed = () =>

@@ -27,6 +27,10 @@ public sealed class SessionCurrentResponse
     public double CurrentMapCostChaos { get; set; }
     public double CurrentMapNetChaos { get; set; }
     public bool CurrentMapUsesDuplicatingScarab { get; set; }
+
+    // The map's chance to copy a captured beast. Below 100 the copies are not counted:
+    // which captures it hit cannot be observed.
+    public int? CurrentMapDuplicateChancePct { get; set; }
     public double? CurrentMapFirstRedSeenSeconds { get; set; }
     public MapCostItem[] CurrentMapCostBreakdown { get; set; } = [];
     public MapReplayEvent[] CurrentMapReplayEvents { get; set; } = [];
@@ -90,6 +94,7 @@ public sealed class MapListItem
     public double CostChaos { get; set; }
     public double NetChaos { get; set; }
     public bool UsedBestiaryScarabOfDuplicating { get; set; }
+    public int? MapDuplicateCapturedBeastsChancePct { get; set; }
     public double? FirstRedSeenSeconds { get; set; }
     public AtlasSnapshot Atlas { get; set; } = new();
     public MapBeastStat[] BeastBreakdown { get; set; } = [];

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace BeastsV3.Analytics;
 
@@ -59,7 +60,8 @@ public sealed class MapAnalyticsRecord
 {
     // Bumped when the shape changes. Telemetry rejects unknown versions; older files just
     // leave new fields at their defaults.
-    public const int CurrentSchemaVersion = 2;
+    // 3 (PoE 3.30): adds MapStats and QuestRedBeastsTotal.
+    public const int CurrentSchemaVersion = 3;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
 
@@ -99,13 +101,19 @@ public sealed class MapAnalyticsRecord
 
     // Read from the map's own stat table, so it holds even when the device was never read.
     // Null means the stat was unreadable, which is not zero; see MapModifierStats.
-    // Additive, so SchemaVersion stays at 2: older readers ignore unknown fields.
 
     // Total additional red beasts the map's modifiers added.
     public int? MapAdditionalRedBeasts { get; set; }
 
     // Chance for a captured beast to be duplicated, percent.
     public int? MapDuplicateCapturedBeastsChancePct { get; set; }
+
+    // Every beast and thread stat the map carried, by the game's stat name.
+    public Dictionary<string, int> MapStats { get; set; } = new();
+
+    // The red beast total from Einhar's quest line. Null when the line never appeared.
+    public int? QuestRedBeastsTotal { get; set; }
+
     public double? FirstRedSeenSeconds { get; set; }
     public AtlasSnapshot Atlas { get; set; } = new();
     public MapBeastStat[] BeastBreakdown { get; set; } = [];
@@ -127,6 +135,10 @@ public sealed class SessionSummary
 {
     public double DurationSeconds { get; set; }
     public int MapsCompleted { get; set; }
+
+    // Time in completed maps. Map History is capped, so its durations cannot rebuild this.
+    public double CompletedMapsDurationSeconds { get; set; }
+
     public int BeastsFound { get; set; }
     public int RedBeastsFound { get; set; }
     public double CapturedChaos { get; set; }
@@ -165,6 +177,63 @@ public sealed class SavedSessionData
     public FamilyTotal[] FamilyTotals { get; set; } = [];
     public MapAnalyticsRecord[] MapHistory { get; set; } = [];
     public MapCostItem[] CostDefaults { get; set; } = [];
+
+    // Autosaves only: the map being run when the save was written, so a reload or a crash
+    // carries on with it. Null in named saves and before the first map.
+    public MapInProgress CurrentMap { get; set; }
+}
+
+// The current map's live state, as written into an autosave and restored on start-up.
+public sealed class MapInProgress
+{
+    public string AreaHash { get; set; } = string.Empty;
+    public string AreaName { get; set; } = string.Empty;
+    public int InstanceId { get; set; } = -1;
+
+    // The map's side zones (SessionState.ActiveMapSideZones).
+    public string[] SideZones { get; set; } = [];
+
+    // Already banked to Map History. Only the identity above matters then, so walking back
+    // into the instance shows it as banked instead of starting it again.
+    public bool IsFinalized { get; set; }
+
+    public bool WasComplete { get; set; }
+    public double ElapsedSeconds { get; set; }
+    public int BeastsFound { get; set; }
+    public int RedBeastsFound { get; set; }
+    public double? FirstRedSeenSeconds { get; set; }
+    public int QuestRedBeastsTotal { get; set; }
+    public AtlasSnapshot Atlas { get; set; } = new();
+    public Dictionary<string, int> BeastCounts { get; set; } = new();
+    public Dictionary<string, int> CapturedCounts { get; set; } = new();
+    public EncounterInProgress[] Encounters { get; set; } = [];
+    public MapReplayEvent[] ReplayEvents { get; set; } = [];
+
+    // The beast tracker's ids for this instance, so beasts already counted are not counted again.
+    public long[] CountedEntityIds { get; set; } = [];
+    public long[] CapturedEntityIds { get; set; } = [];
+    public int TrackerRedBeastsFound { get; set; }
+
+    public MapCostInProgress Cost { get; set; } = new();
+}
+
+public sealed class EncounterInProgress
+{
+    public long EntityId { get; set; }
+    public string BeastName { get; set; } = string.Empty;
+    public double FirstSeenSeconds { get; set; }
+    public double? CapturedSeconds { get; set; }
+}
+
+// CostTracker's current-map state.
+public sealed class MapCostInProgress
+{
+    public MapCostItem[] Lines { get; set; } = [];
+    public int? AdditionalRedBeasts { get; set; }
+    public int? DuplicateCapturedChancePct { get; set; }
+    public Dictionary<string, int> MapStats { get; set; } = new();
+    public int RegionFreeBestiary { get; set; }
+    public double? DeviceReadAgeMs { get; set; }
 }
 
 // Save-session payload from the dashboard.

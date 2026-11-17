@@ -250,6 +250,8 @@ const Q=r=>r.json().catch(()=>({}));
 const tone=t=>t==='captured'?'tone-captured':t==='missed'?'tone-missed':'tone-seen';
 const normalized=v=>String(v||'').trim();
 const dupLabel=v=>v?'Yes':'No';
+// A chance below 100% copies some captures, but which ones cannot be seen, so they are not counted.
+const dupMapLabel=(all,pct)=>all?'Yes':(Number(pct)>0?`${Number(pct)}% chance (copies not counted)`:'No');
 
 async function api(u,o={}){const r=await fetch(u,{cache:'no-store',...o});const d=await Q(r);if(!r.ok){const e=new Error(d.message||`HTTP ${r.status}`);e.code=d.code||'request_failed';throw e}return d}
 function theme(t){document.documentElement.setAttribute('data-theme',t);localStorage.setItem('beastsv3.theme',t)}
@@ -293,7 +295,7 @@ function renderCur(){
     I('mCap').textContent=C(d.currentMapCapturedChaos);
     I('mCost').textContent=C(d.currentMapCostChaos);
     I('mNet').innerHTML=N(d.currentMapNetChaos);
-    I('mDup').textContent=dupLabel(d.currentMapUsesDuplicatingScarab);
+    I('mDup').textContent=dupMapLabel(d.currentMapUsesDuplicatingScarab,d.currentMapDuplicateChancePct);
     I('mBreak').textContent=`Cost breakdown: ${costBreakdown(d.currentMapCostBreakdown)}`;
 
     const events=currentReplayEvents();
@@ -381,7 +383,7 @@ function renderMaps(){
     body.innerHTML=maps.map((m,i)=>{
         const id=stableMapRowId(m,i);
         const openClass=applyMapRowOpenState(id);
-        return `<tr class="row${openClass}" data-detail="${id}"><td>${E(m.areaName||m.areaHash||'n/a')}</td><td>${D(m.durationSeconds)}</td><td>${m.redBeastsFound||0}</td><td>${DT(m.firstRedSeenSeconds)}</td><td>${C(m.capturedChaos)}</td><td>${C(m.costChaos)}</td><td>${N(m.netChaos)}</td><td>${dupLabel(m.usedBestiaryScarabOfDuplicating)}</td><td>${E(LDT(m.completedAtDisplay,m.completedAtUtc))}</td></tr><tr id="${id}" class="detail${openClass}"><td colspan="9"><div class="detail-grid"><div class="card" style="margin:0;padding:8px"><h2 style="margin-bottom:6px">Beast Breakdown</h2>${detailBeastTable(m)}</div><div class="card" style="margin:0;padding:8px"><h2 style="margin-bottom:6px">Cost Breakdown</h2>${detailCostTable(m)}</div><div class="card" style="margin:0;padding:8px"><h2 style="margin-bottom:6px">Replay Log</h2>${detailReplayTable(m)}</div></div></td></tr>`;
+        return `<tr class="row${openClass}" data-detail="${id}"><td>${E(m.areaName||m.areaHash||'n/a')}</td><td>${D(m.durationSeconds)}</td><td>${m.redBeastsFound||0}</td><td>${DT(m.firstRedSeenSeconds)}</td><td>${C(m.capturedChaos)}</td><td>${C(m.costChaos)}</td><td>${N(m.netChaos)}</td><td>${dupMapLabel(m.usedBestiaryScarabOfDuplicating,m.mapDuplicateCapturedBeastsChancePct)}</td><td>${E(LDT(m.completedAtDisplay,m.completedAtUtc))}</td></tr><tr id="${id}" class="detail${openClass}"><td colspan="9"><div class="detail-grid"><div class="card" style="margin:0;padding:8px"><h2 style="margin-bottom:6px">Beast Breakdown</h2>${detailBeastTable(m)}</div><div class="card" style="margin:0;padding:8px"><h2 style="margin-bottom:6px">Cost Breakdown</h2>${detailCostTable(m)}</div><div class="card" style="margin:0;padding:8px"><h2 style="margin-bottom:6px">Replay Log</h2>${detailReplayTable(m)}</div></div></td></tr>`;
     }).join('');
     renderDerived(maps);
 }

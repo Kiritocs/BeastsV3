@@ -18,7 +18,8 @@ namespace BeastsV3.Prices;
 // beast sets and last-updated stamp to the plugin's settings JSON.
 public sealed class PriceService
 {
-    private const string SettingsFileName = "BeastsV3_settings.json";
+    // Until 17 Nov 2026 the beast selection had a file of its own.
+    private const string OldSelectionFileName = "BeastsV3_settings.json";
     private const string ItemOverviewEndpoint = "economy/stash/current/item/overview";
     private const string ExchangeOverviewEndpoint = "economy/exchange/current/overview";
 
@@ -38,6 +39,7 @@ public sealed class PriceService
 
     private readonly BeastsSettings _settings;
     private readonly Func<string> _serverLeague;
+    private readonly Action _saveSettings;
     private Dictionary<string, float> _beastPrices = BeastCatalog.All.ToDictionary(x => x.Name, _ => -1f, StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, float> _marketPrices = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<int, float> _mapTierAverages = new();
@@ -52,10 +54,12 @@ public sealed class PriceService
     private DateTime _lastFetchUtc = DateTime.MinValue;
 
     // serverLeague returns the league the game reports for the logged-in character.
-    public PriceService(BeastsSettings settings, Func<string> serverLeague = null)
+    // saveSettings writes the host's settings file, so a ticked beast is saved at once.
+    public PriceService(BeastsSettings settings, Func<string> serverLeague = null, Action saveSettings = null)
     {
         _settings = settings;
         _serverLeague = serverLeague;
+        _saveSettings = saveSettings;
     }
 
     // How stale poe.ninja's own copy was when last read, from their Age header. Null means
@@ -157,61 +161,47 @@ public sealed class PriceService
         return false;
     }
 
+    // The selection is part of the settings the host loads. This only restores the
+    // case-insensitive lookup of the sets and takes over a selection still saved in the old file.
     public void LoadPersisted()
     {
+        var prices = _settings.BeastPrices;
+        prices.EnabledBeasts = new HashSet<string>(prices.EnabledBeasts ?? [], StringComparer.OrdinalIgnoreCase);
+        prices.EnabledTalismans = new HashSet<string>(prices.EnabledTalismans ?? [], StringComparer.OrdinalIgnoreCase);
+
         try
         {
-            var path = GetSettingsPath();
+            var path = OldSelectionPath();
             if (!File.Exists(path)) return;
 
-            var root = JObject.Parse(File.ReadAllText(path));
-            if (root["BeastPrices"] is not JObject section) return;
-
-            _settings.BeastPrices.LastUpdated = section["LastUpdated"]?.Value<string>() ?? _settings.BeastPrices.LastUpdated;
-
-            if (section["EnabledBeasts"] is JArray arr)
+            if (JObject.Parse(File.ReadAllText(path))["BeastPrices"] is JObject section)
             {
-                _settings.BeastPrices.EnabledBeasts = new HashSet<string>(
-                    arr.Values<string>().Where(s => !string.IsNullOrWhiteSpace(s)),
-                    StringComparer.OrdinalIgnoreCase);
+                if (section["EnabledBeasts"] is JArray beasts)
+                    prices.EnabledBeasts.UnionWith(beasts.Values<string>().Where(s => !string.IsNullOrWhiteSpace(s)));
+                if (section["EnabledTalismans"] is JArray talismans)
+                    prices.EnabledTalismans.UnionWith(talismans.Values<string>().Where(s => !string.IsNullOrWhiteSpace(s)));
             }
 
-            if (section["EnabledTalismans"] is JArray talismanArr)
-            {
-                _settings.BeastPrices.EnabledTalismans = new HashSet<string>(
-                    talismanArr.Values<string>().Where(s => !string.IsNullOrWhiteSpace(s)),
-                    StringComparer.OrdinalIgnoreCase);
-            }
+            SavePersisted();
+
+            // The old file goes only once the selection is really in the host's settings file.
+            // Until then it is read again at the next start, which changes nothing.
+            var saved = Directory.GetFiles(Path.GetDirectoryName(path)!, "BeastsV3*_settings.json")
+                .Any(f => !string.Equals(f, path, StringComparison.OrdinalIgnoreCase) &&
+                          File.ReadAllText(f).Contains("\"EnabledBeasts\""));
+            if (!saved) return;
+
+            File.Delete(path);
+            Log.Info($"Beast selection moved from {OldSelectionFileName} into the plugin settings.");
         }
         catch (Exception ex)
         {
-            Log.Error("Failed to load persisted beast price settings", ex);
+            Log.Error("Failed to take over the old beast selection file", ex);
         }
     }
 
-    public void SavePersisted()
-    {
-        try
-        {
-            var path = GetSettingsPath();
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-
-            var content = File.Exists(path) ? File.ReadAllText(path) : null;
-            var root = string.IsNullOrWhiteSpace(content) ? new JObject() : JObject.Parse(content);
-            var section = root["BeastPrices"] as JObject ?? new JObject();
-            section["LastUpdated"] = _settings.BeastPrices.LastUpdated;
-            section["EnabledBeasts"] = new JArray(_settings.BeastPrices.EnabledBeasts
-                .OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
-            section["EnabledTalismans"] = new JArray(_settings.BeastPrices.EnabledTalismans
-                .OrderBy(x => x, StringComparer.OrdinalIgnoreCase));
-            root["BeastPrices"] = section;
-            File.WriteAllText(path, root.ToString());
-        }
-        catch (Exception ex)
-        {
-            Log.Error("Failed to save persisted beast price settings", ex);
-        }
-    }
+    // Saves the settings now, selection included. Call from the render thread only.
+    public void SavePersisted() => _saveSettings?.Invoke();
 
     public void QueueFetch() => Log.FireAndForget(StartOrJoinFetch, "Price fetch");
 
@@ -367,8 +357,9 @@ public sealed class PriceService
             // Published only now, so a refresh that threw cannot leave an age for uninstalled data.
             UpstreamAgeSeconds = _pendingUpstreamAge;
 
+            // Not saved from here: this runs off the render thread, and the host saves the
+            // settings itself.
             _settings.BeastPrices.LastUpdated = DateTime.Now.ToString("yyyy-MM-dd HH:mm");
-            SavePersisted();
 
             var upstream = UpstreamAgeSeconds is { } age
                 ? $", poe.ninja's copy was {age / 60} min old"
@@ -479,6 +470,7 @@ public sealed class PriceService
 
             var namesById = BuildNameById(response);
             var result = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
+            var listings = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var line in response.Lines)
             {
@@ -486,8 +478,17 @@ public sealed class PriceService
                 var value = GetLineChaosValue(line);
                 if (string.IsNullOrWhiteSpace(name) || value <= 0) continue;
 
-                if (!result.TryGetValue(name, out var existing) || value > existing)
+                // One name can come in several variants: a permanent league lists "Map (Tier 16)"
+                // once per map series, legacy ones at absurd prices. The variant people actually
+                // trade is the one with the most listings; the higher price only breaks a tie.
+                var listed = line.ListingCount ?? 0;
+                var known = result.TryGetValue(name, out var existing);
+                var knownListed = known ? listings[name] : 0;
+                if (!known || listed > knownListed || (listed == knownListed && value > existing))
+                {
                     result[name] = value;
+                    listings[name] = listed;
+                }
 
                 if (tierBucketsOut != null)
                 {
@@ -564,8 +565,8 @@ public sealed class PriceService
             .ToArray();
     }
 
-    private static string GetSettingsPath() =>
-        Path.Combine(Directory.GetCurrentDirectory(), "config", "global", SettingsFileName);
+    private static string OldSelectionPath() =>
+        Path.Combine(Directory.GetCurrentDirectory(), "config", "global", OldSelectionFileName);
 
     private class OverviewResponse
     {
