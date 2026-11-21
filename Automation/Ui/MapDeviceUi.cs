@@ -196,7 +196,26 @@ public sealed class MapDeviceUi
         ReadThreadSlots(window).Where(s => s.State == ThreadSlotState.Picked).ToList();
 
     // The thread named by a slot's tooltip, or null while the tooltip is not built.
-    public static string ThreadName(Element slot) => FirstText(slot?.Tooltip, 2);
+    public static string ThreadName(Element slot) => ThreadNameIn(slot?.Tooltip);
+
+    // A thread tooltip holds its name ("Bestiary Thread"), a description and "Account-bound".
+    // The name is the text that ends in "Thread", not simply the first text: right after a
+    // pick the game fills the tooltip line by line, and for a moment "Account-bound" is the
+    // only text there. Null until the name itself is there.
+    private static string ThreadNameIn(Element tooltip) =>
+        Texts(tooltip, ThreadTooltipDepth).FirstOrDefault(IsThreadName);
+
+    private static bool IsThreadName(string text) =>
+        text.EndsWith(" Thread", StringComparison.OrdinalIgnoreCase) && text.Length <= MaxThreadNameLength;
+
+    // Lines every thread tooltip carries besides the name. A tooltip showing one of them but
+    // no name yet belongs to a thread and is still being filled.
+    private static bool IsThreadTooltipLine(string text) =>
+        text.Contains("Account-bound", StringComparison.OrdinalIgnoreCase) ||
+        text.Contains("personal Map Device", StringComparison.OrdinalIgnoreCase);
+
+    private const int ThreadTooltipDepth = 4;
+    private const int MaxThreadNameLength = 40;
 
     // A slot's count reads "4", or "4+2" when the atlas adds free threads on top. Only the
     // part before the plus is taken from the stash and changed by the buttons.
@@ -273,8 +292,17 @@ public sealed class MapDeviceUi
 
         foreach (var element in new[] { cell }.Concat(ImGuiEx.FreshChildren(cell)))
         {
-            var name = FirstText(element?.Tooltip, 4);
-            if (name != null) return name;
+            var texts = Texts(element?.Tooltip, ThreadTooltipDepth);
+            if (texts.Count == 0) continue;
+
+            var thread = texts.FirstOrDefault(IsThreadName);
+            if (thread != null) return thread;
+
+            // A thread's tooltip without its name yet: not readable for now.
+            if (texts.Any(IsThreadTooltipLine)) return null;
+
+            // Anything else is the clear cell.
+            return texts[0];
         }
         return null;
     }
@@ -323,20 +351,25 @@ public sealed class MapDeviceUi
     }
 
     // First non-empty text of an element or its descendants, nearest level first.
-    private static string FirstText(Element element, int maxDepth)
+    private static string FirstText(Element element, int maxDepth) =>
+        Texts(element, maxDepth).FirstOrDefault();
+
+    // Every non-empty text of an element and its descendants, nearest level first.
+    private static List<string> Texts(Element element, int maxDepth)
     {
-        if (element == null || element.Address == 0) return null;
+        var texts = new List<string>();
+        if (element == null || element.Address == 0) return texts;
 
         var level = new List<Element> { element };
         for (var depth = 0; depth <= maxDepth && level.Count > 0; depth++)
         {
             foreach (var e in level)
             {
-                if (!string.IsNullOrWhiteSpace(e?.Text)) return e.Text.Trim();
+                if (!string.IsNullOrWhiteSpace(e?.Text)) texts.Add(e.Text.Trim());
             }
             level = level.Where(e => e != null).SelectMany(ImGuiEx.FreshChildren).ToList();
         }
-        return null;
+        return texts;
     }
 
     // ---- private -------------------------------------------------------

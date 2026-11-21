@@ -689,8 +689,14 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
             : "In-game banner is turned off (Show In-Game Banner, above).";
 
         ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X);
-        ImGui.TextColored(MenuTheme.Warn,
+        ImGui.PushStyleColor(ImGuiCol.Text, MenuTheme.Warn);
+        ImGui.TextUnformatted(
             $"Anonymous data sharing is ACTIVE - {pending} map(s) queued for upload. {etaNote} {bannerNote}");
+        ImGui.PopStyleColor();
+
+        // Unformatted: the collector's answer is JSON and may hold a '%'.
+        var last = _telemetry?.LastResult;
+        ImGui.TextUnformatted(string.IsNullOrEmpty(last) ? "No upload yet this session." : $"Last upload {last}");
         ImGui.PopTextWrapPos();
     }
 

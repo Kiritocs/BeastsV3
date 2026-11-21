@@ -6,47 +6,43 @@ using ExileCore;
 
 namespace BeastsV3.Analytics;
 
-// Reads the allocated atlas passives (ServerData.AtlasPassiveSkillIds) and classifies the
-// tree into a data-collection cohort. The read is wrapped: ServerData is null outside a
-// game session, and analytics must never take the plugin down.
+// Reads the allocated atlas passives (ServerData.AtlasPassiveSkillIds) and says whether they
+// are the reference tree. Community numbers are measured on that one tree, so that they
+// describe one setup instead of a blend. Only the Bestiary nodes matter: a tree is the
+// reference tree when its allocated Bestiary nodes are exactly the reference ones, and every
+// other atlas node is free.
+//
+// The collector classifies the tree itself from the uploaded nodes (beastsv3-telemetry
+// src/cohort.js); this copy is for the banner and the local record. The two lists must
+// agree: beast-calculator tools/check-node-sync.py compares them.
 public static class AtlasTree
 {
-    // Node ids from GGG's 3.30.0 atlas tree export (the 3.30 rework replaced every older id).
-    // tools/check-atlas-nodes.py validates them against the export each league.
+    public const string Reference = "reference";
+    public const string Hunting = "hunting";
+    public const string Other = "other";
+    public const string Unknown = "unknown";
 
-    // Endangered Species notable: beasts are more likely to be less common varieties.
-    private const ushort EndangeredSpecies = 11040;
+    // REFERENCE-NODES: the Bestiary atlas passives of the reference tree (3.30).
+    //   2231, 4439, 29464                               1 additional Yellow Beast each
+    //   3311, 10514, 14008, 31522, 32041, 35180, 61936  8% chance for an additional Red Beast each
+    //   6518, 23371, 36760, 46850, 47657, 57339         Red Beasts 4% chance to appear in Pairs each
+    //   10574 Bonded for Life    20% chance to create a copy of captured Beasts
+    //   11040 Endangered Species Beasts are more likely to be less common varieties
+    //   48405 Nose-to-Tail       captured Red Beasts may not be consumed at the Blood Altar
+    //   49338 Herd Mentality     Yellow Beasts have 25% chance to be replaced with Red Beasts
+    private static readonly ushort[] ReferenceNodes =
+    [
+        2231, 3311, 4439, 6518, 10514, 10574, 11040, 14008, 23371, 29464,
+        31522, 32041, 35180, 36760, 46850, 47657, 48405, 49338, 57339, 61936,
+    ];
 
-    // Its path: 3 x "8% chance to contain an additional Red Beast" = 24%.
-    private static readonly ushort[] EndangeredSpeciesPath = [10514, 14008, 61936];
+    // Hunting Grounds changes which and how many red beasts a map has, so the collector keeps
+    // maps with it apart, per family. Every other atlas passive is free: Apex Predators and the
+    // other Bestiary passives do not change the beasts.
+    private const ushort HuntingGroundsNode = 7018;
 
-    // Herd Mentality notable: yellow beasts have 25% chance to be replaced with red beasts.
-    private const ushort HerdMentality = 49338;
-
-    // Its path: 3 x "1 additional Yellow Beast" = +3.
-    private static readonly ushort[] HerdMentalityPath = [2231, 4439, 29464];
-
-    // Hunting Grounds: "Red Beasts have 100% increased chance to be from <chosen family>".
-    // It biases which beast appears, so it disqualifies a map from the baseline cohort. The
-    // family is a choice on the node and cannot be told from the node id. The export lists the
-    // choices as variant effects, not nodes: 16876 The Deep, 36075 The Wilds, 31688 The Caverns,
-    // 31858 The Sands.
-    public const ushort HuntingGrounds = 7018;
-
-    private static readonly ushort[] ClassificationNodes = [HuntingGrounds];
-
-    // Cohort A: rates are measured under this tree, not an unmodified one.
-    private static readonly ushort[] ReferenceRequired =
-        [EndangeredSpecies, .. EndangeredSpeciesPath, HerdMentality, .. HerdMentalityPath];
-
-    public static IReadOnlyList<ushort> ReferenceTreeRequiredNodes => ReferenceRequired;
-    public static IReadOnlyList<ushort> ClassificationNodeIds => ClassificationNodes;
-
-    // Display name of a classification node.
-    public static string ClassificationFamily(ushort nodeId) =>
-        nodeId == HuntingGrounds ? "Hunting Grounds" : null;
-
-    // Reads the allocated atlas passives. Empty array when unavailable, so a failed read degrades.
+    // Reads the allocated atlas passives. Empty when unavailable, so a failed read degrades:
+    // ServerData is null outside a game session, and analytics must never take the plugin down.
     public static ushort[] ReadAllocatedNodes(GameController game)
     {
         try
@@ -63,7 +59,7 @@ public static class AtlasTree
         }
     }
 
-    // Builds the per-map snapshot. Capture when a map opens, not when it closes
+    // Builds the per-map snapshot. Capture when a map opens, not when it closes.
     public static AtlasSnapshot Capture(GameController game)
     {
         var nodes = ReadAllocatedNodes(game);
@@ -71,76 +67,30 @@ public static class AtlasTree
         {
             AllocatedNodes = nodes,
             TreeUrl = nodes.Length > 0 ? AtlasTreeUrl.Encode(nodes) : string.Empty,
-            Cohort = ClassifyCohort(nodes),
-            IsStrictReferenceMatch = IsStrictReferenceMatch(nodes),
+            Tree = Classify(nodes),
         };
     }
 
-    // Assigns the data-collection cohort from the allocated set, so there is nothing to spoof.
-    //
-    //   A - reference tree, no classification nodes  -> per-beast rates
-    //   B - reference tree + one classification node    -> that family's multiplier
-    //   C - reference tree + two or more of them        -> how the boosts stack
-    //   D - anything else                            -> counts, tier curves, EV only
-    public static string ClassifyCohort(IReadOnlyCollection<ushort> nodes)
+    // Reference: every reference passive. Hunting: those plus Hunting Grounds.
+    // Other: a reference passive is missing. Unknown: the tree could not be read.
+    public static string Classify(IReadOnlyCollection<ushort> nodes)
     {
-        if (nodes == null || nodes.Count == 0) return "unknown";
+        if (nodes == null || nodes.Count == 0) return Unknown;
 
-        var set = nodes as HashSet<ushort> ?? [.. nodes];
-
-        // Required nodes must all be present; extra non-classification nodes are fine,
-        // since they change how many beasts spawn rather than which.
-        if (!ReferenceRequired.All(set.Contains)) return "D";
-
-        var classificationCount = ClassificationNodes.Count(set.Contains);
-        return classificationCount switch
-        {
-            0 => "A",
-            1 => "B",
-            _ => "C",
-        };
+        var allocated = nodes as HashSet<ushort> ?? [.. nodes];
+        if (!ReferenceNodes.All(allocated.Contains)) return Other;
+        return allocated.Contains(HuntingGroundsNode) ? Hunting : Reference;
     }
 
-    // True when the tree is exactly the reference set and nothing else. Recorded so
-    // cohort purity can be tightened later without recollecting data.
-    public static bool IsStrictReferenceMatch(IReadOnlyCollection<ushort> nodes)
+    // One line for the overlay: what this map's tree means for the community numbers.
+    public static string Describe(AtlasSnapshot snapshot)
     {
-        if (nodes == null || nodes.Count != ReferenceRequired.Length) return false;
-        var set = nodes as HashSet<ushort> ?? [.. nodes];
-        return ReferenceRequired.All(set.Contains);
-    }
+        if (snapshot == null || snapshot.AllocatedNodes.Length == 0) return "Tree: not readable";
+        if (snapshot.Tree == Reference) return "Tree: reference (counts for community numbers)";
+        if (snapshot.Tree == Hunting) return "Tree: reference + Hunting Grounds (counts for community numbers)";
 
-    // Human-readable status for the settings banner.
-    public static string DescribeCohort(AtlasSnapshot snapshot)
-    {
-        if (snapshot == null || snapshot.AllocatedNodes.Length == 0)
-            return "Atlas tree not readable yet.";
-
-        var set = new HashSet<ushort>(snapshot.AllocatedNodes);
-
-        switch (snapshot.Cohort)
-        {
-            case "A":
-                return "Reference tree - contributing to baseline spawn rates.";
-            case "B":
-                {
-                    var node = ClassificationNodes.First(set.Contains);
-                    return $"Reference tree + {ClassificationFamily(node)} boost - " +
-                           "contributing to that classification's multiplier.";
-                }
-            case "C":
-                {
-                    var families = ClassificationNodes.Where(set.Contains)
-                        .Select(ClassificationFamily);
-                    return $"Reference tree + {string.Join(", ", families)} - " +
-                           "contributing to classification stacking data.";
-                }
-            default:
-                {
-                    var missing = ReferenceRequired.Count(x => !set.Contains(x));
-                    return $"Off-reference tree ({missing} reference node(s) missing) - " +
-                           "contributing to beast counts and EV data.";
-                }
-        }
+        var allocated = new HashSet<ushort>(snapshot.AllocatedNodes);
+        var missing = ReferenceNodes.Count(x => !allocated.Contains(x));
+        return $"Tree: {missing} reference Bestiary node(s) missing (does not count for community numbers)";
     }
 }

@@ -47,12 +47,8 @@ public sealed class AtlasSnapshot
     // pathofexile.com tree URL for AllocatedNodes. Redundant, but makes a record reviewable.
     public string TreeUrl { get; set; } = string.Empty;
 
-    // Data-collection cohort: "A" reference tree, "B" +1 classification node, "C" +2 or more,
-    // "D" off-reference, "unknown" when unreadable. See AtlasTree.ClassifyCohort.
-    public string Cohort { get; set; } = "unknown";
-
-    // True when the tree is exactly the reference set, so purity can be tightened later.
-    public bool IsStrictReferenceMatch { get; set; }
+    // "reference", "hunting", "other", or "unknown" when unreadable. See AtlasTree.Classify.
+    public string Tree { get; set; } = AtlasTree.Unknown;
 }
 
 // One completed map's full analytics record.
@@ -73,9 +69,8 @@ public sealed class MapAnalyticsRecord
     // Map tier, 0 when unknown. Spawn rates vary by tier, so this is a grouping key.
     public int MapTier { get; set; }
 
-    // League and game version. Rates change between leagues, so aggregates must not mix them.
+    // Rates change between leagues, so they must not be mixed.
     public string League { get; set; } = string.Empty;
-    public string GameVersion { get; set; } = string.Empty;
 
     public double DurationSeconds { get; set; }
 

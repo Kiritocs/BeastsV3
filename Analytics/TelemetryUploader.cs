@@ -58,6 +58,9 @@ public sealed class TelemetryUploader
     private string _installId;
     private bool _sending;
 
+    // What the collector answered last, for the settings banner. Null before the first upload.
+    public string LastResult { get; private set; }
+
     // When the interval-gated flush last ran, whether or not it sent anything. Drives the
     // "next upload in..." countdown; unrelated to a direct FlushAsync.
     private DateTime _lastFlushUtc = DateTime.MinValue;
@@ -148,9 +151,9 @@ public sealed class TelemetryUploader
         if (string.IsNullOrWhiteSpace(endpoint)) return;
 
         _sending = true;
+        var batch = new List<MapAnalyticsRecord>();
         try
         {
-            var batch = new List<MapAnalyticsRecord>();
             while (batch.Count < MaxBatchSize && _pending.Count > 0) batch.Add(_pending.Dequeue());
 
             var payload = BuildPayload(batch);
@@ -159,29 +162,39 @@ public sealed class TelemetryUploader
             using var content = new StringContent(body, Encoding.UTF8, "application/json");
             using var response = await Http.PostAsync(endpoint, content);
 
+            var sentAt = DateTime.Now.ToString("HH:mm");
             if (response.IsSuccessStatusCode)
             {
-                Log.Debug($"Telemetry: sent {batch.Count} map(s).");
+                // The collector says how many maps it stored, already had, or refused, and why.
+                var answer = await response.Content.ReadAsStringAsync();
+                LastResult = $"{sentAt}: sent {batch.Count} map(s). Collector answered: {answer}";
+                Log.Info($"Telemetry: sent {batch.Count} map(s). Collector answered: {answer}");
             }
             else
             {
                 // Requeue so a transient server error does not lose the data. A 400 means
                 // the payload is wrong and retrying will not help, so drop those.
-                if ((int)response.StatusCode >= 500)
-                {
-                    foreach (var record in Enumerable.Reverse(batch)) _pending.Enqueue(record);
-                }
-                Log.Debug($"Telemetry: server returned {(int)response.StatusCode}.");
+                if ((int)response.StatusCode >= 500) Requeue(batch);
+                LastResult = $"{sentAt}: the collector returned {(int)response.StatusCode}.";
+                Log.Warn($"Telemetry: the collector returned {(int)response.StatusCode} for {batch.Count} map(s).");
             }
         }
         catch (Exception ex)
         {
-            Log.Debug($"Telemetry upload failed. {ex.GetType().Name}: {ex.Message}");
+            // No answer at all (offline, timeout): keep the maps for the next try.
+            Requeue(batch);
+            LastResult = $"{DateTime.Now:HH:mm}: upload failed ({ex.GetType().Name}). It is tried again.";
+            Log.Warn($"Telemetry upload failed. {ex.GetType().Name}: {ex.Message}");
         }
         finally
         {
             _sending = false;
         }
+    }
+
+    private void Requeue(List<MapAnalyticsRecord> batch)
+    {
+        foreach (var record in batch) _pending.Enqueue(record);
     }
 
     // Exactly what would be uploaded, pretty-printed. Backs the "Preview Submission"
@@ -215,21 +228,15 @@ public sealed class TelemetryUploader
         InstallId = InstallId,
         Maps = records.Select(r => new TelemetryMap
         {
-            // The record's own version: the server treats 2 (before 3.30) and 3 differently.
+            // The record's own version: the collector accepts 3 (PoE 3.30) only.
             SchemaVersion = r.SchemaVersion,
             MapId = r.MapId,
             League = r.League,
-            GameVersion = r.GameVersion,
             MapTier = r.MapTier,
             AreaName = r.AreaName,
             DurationSeconds = r.DurationSeconds,
-            BeastsFound = r.BeastsFound,
             RedBeastsFound = r.RedBeastsFound,
-            UsedBestiaryScarabOfDuplicating = r.UsedBestiaryScarabOfDuplicating,
             AtlasNodes = r.Atlas?.AllocatedNodes ?? [],
-            Scarabs = r.ScarabNames ?? [],
-            MapAdditionalRedBeasts = r.MapAdditionalRedBeasts,
-            MapDuplicateCapturedBeastsChancePct = r.MapDuplicateCapturedBeastsChancePct,
             MapStats = r.MapStats ?? new(),
             QuestRedBeastsTotal = r.QuestRedBeastsTotal,
             Beasts = (r.BeastBreakdown ?? [])
@@ -239,7 +246,8 @@ public sealed class TelemetryUploader
         }).ToArray(),
     };
 
-    private bool IsEnabled() => _settings.Analytics.Telemetry.ShareAnonymousData.Value;
+    private bool IsEnabled() =>
+        TelemetrySettings.Unlocked && _settings.Analytics.Telemetry.ShareAnonymousData.Value;
 
     private static string GetEndpoint() => DecodeEndpoint();
 
@@ -268,17 +276,11 @@ public sealed class TelemetryUploader
         public int SchemaVersion { get; set; }
         public string MapId { get; set; } = string.Empty;
         public string League { get; set; } = string.Empty;
-        public string GameVersion { get; set; } = string.Empty;
         public int MapTier { get; set; }
         public string AreaName { get; set; } = string.Empty;
         public double DurationSeconds { get; set; }
-        public int BeastsFound { get; set; }
         public int RedBeastsFound { get; set; }
-        public bool UsedBestiaryScarabOfDuplicating { get; set; }
         public ushort[] AtlasNodes { get; set; } = [];
-        public string[] Scarabs { get; set; } = [];
-        public int? MapAdditionalRedBeasts { get; set; }
-        public int? MapDuplicateCapturedBeastsChancePct { get; set; }
         public Dictionary<string, int> MapStats { get; set; } = new();
         public int? QuestRedBeastsTotal { get; set; }
         public TelemetryBeast[] Beasts { get; set; } = [];

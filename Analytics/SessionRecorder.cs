@@ -758,8 +758,7 @@ public sealed class SessionRecorder
             return;
         }
 
-        Log.Debug($"Atlas tree captured: {snapshot.AllocatedNodes.Length} nodes, " +
-                  $"cohort={snapshot.Cohort} strict={snapshot.IsStrictReferenceMatch}");
+        Log.Debug($"Atlas tree captured: {snapshot.AllocatedNodes.Length} nodes, tree={snapshot.Tree}");
     }
 
     // Map tier from the cost tracker, which reads MapKey.Tier and writes a "Map (Tier N)"
@@ -918,7 +917,6 @@ public sealed class SessionRecorder
         AreaName = source.AreaName,
         MapTier = source.MapTier,
         League = source.League,
-        GameVersion = source.GameVersion,
         DurationSeconds = source.DurationSeconds,
         BeastsFound = source.BeastsFound,
         RedBeastsFound = source.RedBeastsFound,
@@ -945,8 +943,7 @@ public sealed class SessionRecorder
             {
                 AllocatedNodes = source.Atlas.AllocatedNodes?.ToArray() ?? [],
                 TreeUrl = source.Atlas.TreeUrl,
-                Cohort = source.Atlas.Cohort,
-                IsStrictReferenceMatch = source.Atlas.IsStrictReferenceMatch,
+                Tree = source.Atlas.Tree,
             },
         BeastBreakdown = source.BeastBreakdown?.Select(b => new MapBeastStat
         {

@@ -54,6 +54,7 @@ public sealed class AnalyticsOverlay
     private void DrawTelemetryWarning(AnalyticsOverlaySettings window, System.Numerics.Vector2 overlaySize)
     {
         var telemetrySettings = _settings.Analytics.Telemetry;
+        if (!TelemetrySettings.Unlocked) return;
         if (!telemetrySettings.ShareAnonymousData.Value || !telemetrySettings.ShowActiveBanner.Value) return;
 
         var rectHeight = _game.Window.GetWindowRectangle().Height;
@@ -99,34 +100,16 @@ public sealed class AnalyticsOverlay
             _lineBuffer.Add($"Avg map time: {ImGuiEx.FormatDuration(TimeSpan.FromSeconds(avgSeconds))}");
         }
 
-        // Which data cohort the current tree contributes to. Shown regardless of sharing: it
+        // Whether this map's tree is the reference tree. Shown regardless of sharing: it
         // doubles as a check that the tree is what you think it is.
         if (TelemetrySettings.Unlocked &&
-            _settings.Analytics.Telemetry.ShowCohortBanner.Value &&
-            state.IsCurrentAreaTrackable &&
-            state.CurrentMapAtlas?.AllocatedNodes.Length > 0)
+            _settings.Analytics.Telemetry.ShowTreeBanner.Value &&
+            state.IsCurrentAreaTrackable)
         {
-            _lineBuffer.Add(CohortLine(state.CurrentMapAtlas));
+            _lineBuffer.Add(AtlasTree.Describe(state.CurrentMapAtlas));
         }
 
         return string.Join('\n', _lineBuffer);
-    }
-
-    // One short line describing what this run contributes.
-    private static string CohortLine(AtlasSnapshot atlas) => atlas.Cohort switch
-    {
-        "A" => "Tree: reference (BASELINE DATA)",
-        "B" or "C" => $"Tree: +{string.Join(", ", BoostedFamilies(atlas))}",
-        _ => "Tree: off-reference (counts only)",
-    };
-
-    private static IEnumerable<string> BoostedFamilies(AtlasSnapshot atlas)
-    {
-        foreach (var node in AtlasTree.ClassificationNodeIds)
-        {
-            if (Array.IndexOf(atlas.AllocatedNodes, node) >= 0)
-                yield return AtlasTree.ClassificationFamily(node);
-        }
     }
 
     private bool Visible()

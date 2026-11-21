@@ -52,35 +52,34 @@ public sealed class InventoryUi
             .ToList();
     }
 
-    // Whether ground labels are switched on, or null when it cannot be told. Read from the
-    // labels of things that are not items (Einhar, the stash, a waypoint): those are shown only
-    // while labels are on. Item labels do not work for this - beasts on the ground kept
-    // reporting visible with labels off. With no such label around, the game's own "always
-    // highlight" option is used, which followed the toggle key both ways.
-    public bool? AreGroundLabelsOn
+    // Whether ground labels are switched on, or null when it cannot be told. The game's own
+    // "always highlight" option is read first: it follows the toggle key both ways. Label
+    // visibility is only a fallback for when the option cannot be read, because it is not
+    // reliable - with labels off, the stash, Einhar, the waypoint and area transitions all kept
+    // reporting visible (seen in the Menagerie), and so did beasts on the ground.
+    public bool? AreGroundLabelsOn => AlwaysHighlightOption ?? LabelsLookOn;
+
+    private bool? LabelsLookOn
     {
         get
         {
             var labels = _game?.IngameState?.IngameUi?.ItemsOnGroundLabels;
+            if (labels == null) return null;
 
             // The thing under the cursor shows its label even with labels off, so it says nothing.
             var hovered = _game?.IngameState?.IngameUi?.ItemsOnGroundLabelElement?.ItemOnHover?.Address ?? 0;
             var sawOne = false;
-            if (labels != null)
+            foreach (var label in labels)
             {
-                foreach (var label in labels)
-                {
-                    var entity = label?.ItemOnGround;
-                    if (entity == null || entity.Type == EntityType.WorldItem) continue;
-                    if (hovered != 0 && entity.Address == hovered) continue;
+                var entity = label?.ItemOnGround;
+                if (entity == null || entity.Type == EntityType.WorldItem) continue;
+                if (hovered != 0 && entity.Address == hovered) continue;
 
-                    sawOne = true;
-                    if (label.IsVisible) return true;
-                }
+                sawOne = true;
+                if (label.IsVisible) return true;
             }
 
-            if (sawOne) return false;
-            return AlwaysHighlightOption;
+            return sawOne ? false : null;
         }
     }
 

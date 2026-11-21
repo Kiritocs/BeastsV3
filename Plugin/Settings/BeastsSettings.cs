@@ -27,7 +27,7 @@ public class BeastsSettings : ISettings
     [Menu("Overlays: Exploration Route", "Experimental route through the map that covers all beast spawns.")]
     public ExplorationRouteSettings ExplorationRoute { get; set; } = new();
 
-    [Menu("Overlays: Thread Effects", "Lists the Bestiary Thread count and every beast effect on the current map, with a short description of each.")]
+    [Menu("Overlays: Thread Effects", "Lists the Bestiary Thread count and the modifiers the Threads rolled on the current map.")]
     public ThreadEffectsSettings ThreadEffects { get; set; } = new() { XPos = new(1, 0, 100), YPos = new(30, 0, 100) };
 
     [Menu("Overlays: Possible Beasts", "Lists which of your tracked beasts the current map can contain, from the moment it has loaded.")]
@@ -1129,8 +1129,9 @@ public class TelemetrySettings
 
     [Menu("Enable Sharing",
         "OFF BY DEFAULT. When on, each completed map sends: league, map tier, area name, duration, " +
-        "beast counts, which beasts were captured, which map device items were used, and your allocated atlas " +
-        "passives. It never sends your account name, character name, prices, session names or file paths. " +
+        "the red beasts seen by name, the red beast total from Einhar's quest, the map's beast and Thread " +
+        "stats, and your allocated atlas passives. It never sends your account name, character name, " +
+        "prices, session names or file paths. " +
         "Use Preview Submission to read the exact bytes before enabling.")]
     public ToggleNode ShareAnonymousData { get; set; } = new(false);
 
@@ -1161,10 +1162,10 @@ public class TelemetrySettings
         "locally, and never derived from your account, character or machine.")]
     public ButtonNode ResetInstallId { get; set; } = new();
 
-    [Menu("Show Tree Cohort Banner",
-        "Show which data cohort your current atlas tree contributes to. Reference tree = baseline spawn " +
-        "rates; other trees still contribute beast counts and profit data.")]
-    public ToggleNode ShowCohortBanner { get; set; } = new(true);
+    [Menu("Show Tree Line",
+        "Show in the analytics overlay whether your atlas tree is the reference tree. Only maps run on " +
+        "the reference tree count for the community numbers; other maps are stored but not used.")]
+    public ToggleNode ShowTreeBanner { get; set; } = new(true);
 }
 
 [Submenu(CollapsedByDefault = true)]

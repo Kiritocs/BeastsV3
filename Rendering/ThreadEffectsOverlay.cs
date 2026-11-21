@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.RegularExpressions;
 using BeastsV3.Plugin.Settings;
 using BeastsV3.Shared;
 using ExileCore;
@@ -10,24 +9,16 @@ using Color = SharpDX.Color;
 
 namespace BeastsV3.Rendering;
 
-// Lists what the Bestiary Threads did to the current map: the thread count and the beast
-// effects the map carries, each with a short description. The effects are read from the map's
-// own stats, so the list is there from the moment the map loads. Threads of other mechanics
-// set no beast stats and never show up here. Each effect is drawn as good, bad or plain, or
-// left out, as the user set it.
+// Lists what the Bestiary Threads did to the current map: the thread count and the modifiers
+// the Threads rolled, read from the map's own stats, so the list is there from the moment the
+// map loads. Only what a Thread can roll is listed; beast stats that come from the atlas tree
+// (pair chance, Onslaught, copy chance and so on) are the same on every map and are left out.
+// Each effect is drawn as good, bad or plain, or left out, as the user set it.
 public sealed class ThreadEffectsOverlay
 {
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(1);
 
     private const string ThreadCountStat = "MapBestiaryScarabCount";
-
-    // Beast stats that say nothing a player needs: the thread count has its own line, the rest
-    // are switches the game uses internally.
-    private static readonly HashSet<string> Internal = new(StringComparer.Ordinal)
-    {
-        ThreadCountStat, "MapBestiaryLeague", "MapSpawnBestiaryEncounters", "MapForceBestiaryEncounter",
-        "MapUsesBeastCatcherRules",
-    };
 
     // One known effect: its ExileCore stat name, the name shown in the settings list, how it is
     // shown until the user says otherwise, and the overlay line for a given value.
@@ -37,50 +28,19 @@ public sealed class ThreadEffectsOverlay
     private const string Bad = ThreadEffectsSettings.Bad;
     private const string Plain = ThreadEffectsSettings.Plain;
 
-    // The wording is the plugin's, taken from each stat's name and value, not the game's own
-    // text. A beast stat missing here is still listed, by its raw name, so a new effect cannot
-    // go unnoticed.
+    // The seven modifiers the game lists under "Random Bestiary Thread Modifiers", in its own
+    // words. The invasion and Sacred Fauna stats are matched by name: neither has been seen on
+    // a map yet.
     private static readonly Effect[] Effects =
     [
         new("MapAdditionalRedBeasts", "Additional Red Beasts", Good, v => $"{v} additional Red Beast{ImGuiEx.PluralSuffix(v)}"),
-        new("MapAdditionalRedBeastChancePct", "Chance for one more Red Beast", Good, v => $"{v}% chance for one more Red Beast"),
-        new("MapAdditionalRedBeastFamilyCaverns", "Additional Red Beasts from The Caverns", Good, v => $"{v} additional Red Beast{ImGuiEx.PluralSuffix(v)} from The Caverns"),
-        new("MapAdditionalRedBeastFamilyDeep", "Additional Red Beasts from The Deep", Good, v => $"{v} additional Red Beast{ImGuiEx.PluralSuffix(v)} from The Deep"),
-        new("MapAdditionalRedBeastFamilySands", "Additional Red Beasts from The Sands", Good, v => $"{v} additional Red Beast{ImGuiEx.PluralSuffix(v)} from The Sands"),
-        new("MapAdditionalRedBeastFamilyWilds", "Additional Red Beasts from The Wilds", Good, v => $"{v} additional Red Beast{ImGuiEx.PluralSuffix(v)} from The Wilds"),
-        new("MapRedBeastFromCavernsChancePct", "Red Beasts more likely from The Caverns", Plain, v => $"Red Beasts are {v}% more likely to be from The Caverns"),
-        new("MapRedBeastFromDeepChancePct", "Red Beasts more likely from The Deep", Plain, v => $"Red Beasts are {v}% more likely to be from The Deep"),
-        new("MapRedBeastFromSandsChancePct", "Red Beasts more likely from The Sands", Plain, v => $"Red Beasts are {v}% more likely to be from The Sands"),
-        new("MapRedBeastFromWildsChancePct", "Red Beasts more likely from The Wilds", Plain, v => $"Red Beasts are {v}% more likely to be from The Wilds"),
-        new("MapRedBeastsSpawnedInPairsChancePct", "Red Beasts appear in pairs", Good, v => $"Red Beasts have {v}% chance to appear in pairs"),
-        new("MapYellowBeastsReplacedByRedBeastsChancePct", "Yellow Beasts become Red Beasts", Good, v => $"Yellow Beasts have {v}% chance to be Red Beasts instead"),
-        new("MapRareBeastsMoreCommon", "Rarer beast varieties more common", Good, _ => "Rarer beast varieties are more common"),
-        new("MapBestiaryAreaContainsBlackMorrigan", "Black Mórrigan in the map", Good, _ => "The map contains a Black Mórrigan"),
-        new("MapXBestiaryPacksAreHarvestBeasts", "Beast packs are Harvest beasts", Plain, v => $"{v} beast pack{ImGuiEx.PluralSuffix(v)} {(v == 1 ? "is" : "are")} Harvest beasts"),
-        new("MapBestiaryYellowBeastsAreHulks", "Yellow Beasts are Hulks", Plain, _ => "Yellow Beasts are Hulks"),
-        new("MapDuplicateCapturedBeastsChancePct", "Copy of each captured beast", Good, v => $"{v}% chance to get a copy of each captured beast"),
-        new("MapBeastPctChanceToNotBeConsumed", "Beasts not used up at the Blood Altar", Plain, v => $"Captured beasts have {v}% chance not to be used up at the Blood Altar"),
-        new("MapBestiaryBeastsXAdditionalModifiers", "Additional Bestiary modifiers", Plain, v => $"Beasts have {v} additional Bestiary modifier{ImGuiEx.PluralSuffix(v)}"),
-        new("MapBestiaryTalismanDropChancePct", "Talisman drop chance", Plain, v => $"Red Beasts are {v}% more likely to drop a Talisman"),
-        new("MapBestiaryBeastsHaveXWispsOfAllTypes", "Beasts carry Wildwood Wisps", Plain, v => $"Beasts carry {v} Wildwood Wisps of each type"),
-        new("MapBestiaryMonsterFromLeagueItemRarityPctPermyriad", "Beast item rarity", Plain, v => $"Beasts drop items with {v / 100f:0.#}% increased rarity"),
-        new("MapRedBeastDoubleExperienceChancePct", "Red Beasts grant double experience", Plain, v => $"Red Beasts have {v}% chance to grant double experience"),
-        new("MapRedBeastsAreLuckyChancePct", "Red Beasts are Lucky", Plain, v => $"Red Beasts have {v}% chance to be Lucky"),
-        new("MapBestiaryMonsterDifficultyTankinessPct", "Beasts are tougher", Bad, v => $"Beasts are {v}% tougher"),
-        new("MapBestiaryMonsterLifePctFinal", "Beasts have more life", Bad, v => $"Beasts have {v}% more life"),
-        new("MapBestiaryMonsterDamagePct", "Beasts deal increased damage", Bad, v => $"Beasts deal {v}% increased damage"),
-        new("MapBestiaryMonsterDamagePctFinal", "Beasts deal more damage", Bad, v => $"Beasts deal {v}% more damage"),
-        new("MapRedBeastsHaveOnslaught", "Red Beasts have Onslaught", Bad, _ => "Red Beasts have Onslaught"),
-        new("MapBestiaryBeastHasXBestialRage", "Beasts have Bestial Rage", Bad, v => $"Beasts have {v} Bestial Rage"),
-        new("MapBestiaryBeastChanceToBreakFree", "Beasts break free of the net", Bad, v => $"Beasts have {v}% chance to break free of the net"),
-        new("MapBestiaryEinharBloodExplodeAura", "Einhar's blood aura", Plain, _ => "Einhar has a blood aura that makes enemies explode"),
-        new("MapEinharMissionBeastInvasionChancePct", "Beast invasion", Plain, v => $"{v}% chance for a beast invasion"),
-        new("MapBestiaryScarabMoreLikelyPct", "Bestiary Threads more likely to drop", Plain, v => $"Bestiary Threads are {v}% more likely to drop"),
-        new("MapDisableBestiaryScarabDrops", "Bestiary Threads cannot drop", Plain, _ => "Bestiary Threads cannot drop"),
+        new("MapEinharMissionBeastInvasionChancePct", "Invaded by a large number of Red Beasts", Good, _ => "Invaded by a large number of Red Beasts"),
+        new("MapBestiaryAreaContainsBlackMorrigan", "Contains the Black Mórrigan", Good, _ => "Contains the Black Mórrigan"),
+        new("MapXBestiaryPacksAreHarvestBeasts", "Additional Sacred Fauna Red Beasts", Good, _ => "Additional Sacred Fauna Red Beasts"),
+        new("MapBestiaryBeastsHaveXWispsOfAllTypes", "Beasts empowered by Wildwood Wisps", Plain, _ => "Beasts are empowered by Wildwood Wisps of all types"),
+        new("MapBestiaryEinharBloodExplodeAura", "Enemies near Einhar explode", Plain, _ => "Enemies near Einhar explode on death"),
+        new("MapBestiaryYellowBeastsAreHulks", "Yellow Beasts are Nameless Beasts", Plain, _ => "Yellow Beasts are Nameless Beasts"),
     ];
-
-    private static readonly HashSet<string> Known = Effects.Select(e => e.Stat).ToHashSet(StringComparer.Ordinal);
-    private static readonly Regex WordStart = new("(?<=[a-z0-9])(?=[A-Z])", RegexOptions.Compiled);
 
     private readonly GameController _game;
     private readonly BeastsSettings _settings;
@@ -170,8 +130,8 @@ public sealed class ThreadEffectsOverlay
         };
     }
 
-    // Fills the text and the colour of each of its lines. The text is empty when the map
-    // carries no beast stat at all.
+    // Fills the text and the colour of each of its lines. The text is empty when the map has
+    // no Bestiary Threads and none of their effects.
     private void Build()
     {
         _text = string.Empty;
@@ -180,39 +140,25 @@ public sealed class ThreadEffectsOverlay
         var stats = _game?.IngameState?.Data?.MapStats;
         if (stats == null || stats.Count == 0) return;
 
-        var beastStats = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (var stat in stats)
-        {
-            var name = stat.Key.ToString();
-            if (name.Contains("Bestiary") || name.Contains("Beast")) beastStats[name] = stat.Value;
-        }
-        if (beastStats.Count == 0) return;
+        var byName = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var stat in stats) byName[stat.Key.ToString()] = stat.Value;
 
-        var plain = _settings.ThreadEffects.TextColor.Value;
         var lines = new List<string>();
         var colors = new List<Color>();
 
-        if (beastStats.TryGetValue(ThreadCountStat, out var threads) && threads > 0)
+        if (byName.TryGetValue(ThreadCountStat, out var threads) && threads > 0)
         {
             lines.Add($"Bestiary Threads: {threads}");
-            colors.Add(plain);
+            colors.Add(_settings.ThreadEffects.TextColor.Value);
         }
 
         foreach (var effect in Effects)
         {
-            if (!beastStats.TryGetValue(effect.Stat, out var value) || value == 0) continue;
+            if (!byName.TryGetValue(effect.Stat, out var value) || value == 0) continue;
             var mode = ModeOf(effect);
             if (mode == ThreadEffectsSettings.Hide) continue;
             lines.Add("- " + effect.Describe(value));
             colors.Add(ColorOf(mode));
-        }
-
-        // Effects the plugin has no entry for always show, so a new one is noticed.
-        foreach (var (name, value) in beastStats.OrderBy(s => s.Key, StringComparer.Ordinal))
-        {
-            if (value == 0 || Internal.Contains(name) || Known.Contains(name)) continue;
-            lines.Add($"- {WordStart.Replace(name.StartsWith("Map") ? name[3..] : name, " ")}: {value}");
-            colors.Add(plain);
         }
 
         _text = string.Join('\n', lines);
