@@ -58,13 +58,46 @@ public sealed class BestiaryUi
 
     public bool IsChallengesPanelVisible => ChallengesPanel?.IsVisible == true;
 
+    // Found among the Challenges panel's pages, not through ExileCore's TabContainer.BestiaryTab
     public BestiaryTab BestiaryTab
     {
         get
         {
-            try { return _game?.IngameState?.IngameUi?.ChallengesPanel?.TabContainer?.BestiaryTab; }
+            try
+            {
+                var pages = _game?.IngameState?.IngameUi?.ChallengesPanel?.TabContainer?.GetChildAtIndex(TabPagesChildIndex);
+                if (pages == null) return null;
+
+                var inner = pages.GetChildAtIndex(_bestiaryPageIndex)?.GetChildAtIndex(0);
+                if (!HoldsCapturedBeastsPage(inner))
+                {
+                    inner = null;
+                    var count = (int)Math.Min(pages.ChildCount, 64);
+                    for (var i = 0; i < count && inner == null; i++)
+                    {
+                        var candidate = pages.GetChildAtIndex(i)?.GetChildAtIndex(0);
+                        if (!HoldsCapturedBeastsPage(candidate)) continue;
+                        inner = candidate;
+                        _bestiaryPageIndex = i;
+                    }
+                }
+
+                return inner?.GetObject<BestiaryTab>(inner.Address);
+            }
             catch { return null; }
         }
+    }
+
+    private const int TabPagesChildIndex = 1;
+    private int _bestiaryPageIndex = 21;
+
+    private static bool HoldsCapturedBeastsPage(Element inner)
+    {
+        if (inner == null) return false;
+        var count = (int)Math.Min(inner.ChildCount, 64);
+        for (var i = 0; i < count; i++)
+            if (LooksLikeCapturedBeastsPage(inner.GetChildAtIndex(i))) return true;
+        return false;
     }
 
     // Found by its shape among the Bestiary tab's pages, not through ExileCore's
@@ -650,12 +683,24 @@ public sealed class BestiaryUi
     }
 
     // A row's beast name, read from its tooltip with wrapping hyphens stripped.
+    // Unique beasts (Black Mórrigan) have no "- name -" body line; their name is in the header.
     public static string BeastDisplayName(CapturedBeast beast)
     {
         try
         {
-            var text = ImGuiEx.GetChildAt(beast?.Tooltip, BeastNamePath)?.Text;
-            return text?.Replace("-", string.Empty).Trim();
+            var tooltip = beast?.Tooltip;
+            var line = ImGuiEx.GetChildAt(tooltip, BeastNamePath)?.Text?.Trim();
+            if (!string.IsNullOrEmpty(line) && line.StartsWith("-", StringComparison.Ordinal))
+                return line.Replace("-", string.Empty).Trim();
+
+            var header = tooltip?.GetChildAtIndex(0);
+            for (var i = (int)(header?.ChildCount ?? 0) - 1; i >= 0; i--)
+            {
+                var text = header.GetChildAtIndex(i)?.Text?.Trim();
+                if (!string.IsNullOrEmpty(text)) return text;
+            }
+
+            return string.IsNullOrEmpty(line) ? null : line.Replace("-", string.Empty).Trim();
         }
         catch
         {

@@ -229,7 +229,7 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
         _tabPickers = new TabPickers(Settings, _stashUi, _merchantUi, _atlasUi);
         _mapDeviceLoad = new MapDeviceLoad(_runner, _automationInput, _waits, Settings, GameController, _mapDeviceUi, _atlasUi, _inventoryUi, _cost, _prices, _restock, _hideoutTravel);
 
-        _bestiary = new Bestiary(_runner, _automationInput, _waits, Settings, _bestiaryUi, _inventoryUi, _clipboardAutoPaste, _capturedMonsterStash, _hideoutTravel, _uiCleanup);
+        _bestiary = new Bestiary(_runner, _automationInput, _waits, Settings, _bestiaryUi, _inventoryUi, _clipboardAutoPaste, _capturedMonsterStash, _hideoutTravel, _uiCleanup, _navigate, GameController);
         _quickButtons.StartItemizeAll = () => Log.FireAndForget(() => _bestiary.ItemizeAllAsync(), "Bestiary itemize all");
         _quickButtons.StartDeleteAll = () => Log.FireAndForget(() => _bestiary.DeleteAllAsync(), "Bestiary delete all");
 

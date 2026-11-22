@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using BeastsV3.Automation.Input;
+using BeastsV3.Automation.Navigation;
 using BeastsV3.Automation.Ui;
 using BeastsV3.Beasts;
 using BeastsV3.Plugin.Settings;
@@ -13,7 +14,10 @@ using BeastsV3.Shared;
 using ExileCore.PoEMemory;
 using ExileCore.PoEMemory.Elements;
 using ExileCore.PoEMemory.MemoryObjects;
+using ExileCore.Shared.Enums;
+using ExileCore;
 using Hexa.NET.ImGui;
+using GridVec2 = System.Numerics.Vector2;
 using RectangleF = SharpDX.RectangleF;
 using SharpVec2 = SharpDX.Vector2;
 
@@ -76,15 +80,20 @@ public sealed class Bestiary
     private readonly CapturedMonsterStash _capturedMonsterStash;
     private readonly HideoutTravel _hideoutTravel;
     private readonly UiCleanup _uiCleanup;
+    private readonly Navigate _navigate;
+    private readonly GameController _game;
 
     // Regex to reapply when the panel is reopened after an auto-stash interrupt.
     private string _activeRegexForResume = string.Empty;
 
     public Bestiary(Runner runner, AutomationInput input, Waits waits, BeastsSettings settings,
         BestiaryUi bestiaryUi, InventoryUi inventoryUi, ClipboardAutoPaste clipboard,
-        CapturedMonsterStash capturedMonsterStash, HideoutTravel hideoutTravel, UiCleanup uiCleanup)
+        CapturedMonsterStash capturedMonsterStash, HideoutTravel hideoutTravel, UiCleanup uiCleanup,
+        Navigate navigate, GameController game)
     {
         _uiCleanup = uiCleanup;
+        _navigate = navigate;
+        _game = game;
         _runner = runner;
         _input = input;
         _waits = waits;
@@ -161,6 +170,10 @@ public sealed class Bestiary
     private async Task<ClearResult> RunClearAsync(CancellationToken ct, bool deleteMode, bool applyRegex,
         bool autoStashOnFull = true, int? maxToProcess = null)
     {
+        // The Waypoint and NPCs stay hoverable over the pile, even with labels off.
+        if (!deleteMode && _settings.BestiaryAutomation.DropBeastsWhileItemizing.Value)
+            await MoveToClearDropSpotAsync(ct);
+
         await EnsureCapturedBeastsPanelOpenAsync(ct);
         ct.ThrowIfCancellationRequested();
 
@@ -780,26 +793,53 @@ public sealed class Bestiary
 
         await OpenInventoryIfClosedAsync();
 
-        if (!_inventoryUi.TryGetFreeCellCenter(out var cell))
-            throw new InvalidOperationException(
-                "An itemized beast is on the cursor but no free inventory cell was found. Place it by hand.");
+        var releasedCtrl = false;
+        try
+        {
+            for (var attempt = 1; attempt <= PlaceHeldAttempts; attempt++)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (!_inventoryUi.TryGetFreeCellCenter(out var cell))
+                    throw new InvalidOperationException(
+                        "An itemized beast is on the cursor but no free inventory cell was found. Place it by hand.");
 
-        await _input.ClickAtAsync(
-            cell,
-            MouseButtons.Left,
-            preDelayMs: timing.Clicks.UiClickPreDelayMs.Value,
-            postDelayMs: timing.Polling.FastPollDelayMs.Value);
+                if (attempt > 1 && !releasedCtrl)
+                {
+                    _input.PressKeyUp(Keys.LControlKey);
+                    releasedCtrl = true;
+                }
 
-        var placed = await _waits.WaitForAsync(
-            () => !_inventoryUi.IsHoldingItem && _inventoryUi.FreeCellCount() < freeBefore,
-            timeoutMs: PanelWaitTimeoutMs,
-            pollDelayMs: poll);
+                await _input.ClickAtAsync(
+                    cell,
+                    MouseButtons.Left,
+                    preDelayMs: timing.Clicks.UiClickPreDelayMs.Value,
+                    postDelayMs: timing.Polling.FastPollDelayMs.Value);
 
-        if (!placed)
-            throw new InvalidOperationException(
-                "An itemized beast is still on the cursor after clicking a free inventory cell. " +
-                "Place it by hand; clicking another beast would drop it on the ground.");
+                if (await _waits.WaitForAsync(
+                        () => !_inventoryUi.IsHoldingItem && _inventoryUi.FreeCellCount() < freeBefore,
+                        timeoutMs: PanelWaitTimeoutMs,
+                        pollDelayMs: poll))
+                {
+                    if (attempt > 1) Log.Debug($"Held beast placed on attempt {attempt}.");
+                    return;
+                }
+
+                Log.Debug($"Held beast not placed: clicked ({cell.X:0}, {cell.Y:0}) on attempt {attempt}/{PlaceHeldAttempts}, " +
+                          $"holding={_inventoryUi.IsHoldingItem}, inventory open={_inventoryUi.IsVisible}, " +
+                          $"free cells {_inventoryUi.FreeCellCount()} (before {freeBefore}).");
+            }
+        }
+        finally
+        {
+            if (releasedCtrl) _input.PressKeyDown(Keys.LControlKey);
+        }
+
+        throw new InvalidOperationException(
+            "An itemized beast is still on the cursor after clicking a free inventory cell. " +
+            "Place it by hand; clicking another beast would drop it on the ground.");
     }
+
+    private const int PlaceHeldAttempts = 3;
 
     // Drop mode: brings every beast itemized since the last collection into the inventory. The
     // one still on the cursor is placed first. The rest lie in one pile at the character's
@@ -1122,6 +1162,103 @@ public sealed class Bestiary
         Log.Debug($"Captured Beasts list did not settle within {RowSettleTimeoutMs}ms (rows={lastCount}, loading={_bestiaryUi.IsLoading}).");
         await _input.DelayForUiCheckAsync(timing.Polling.UiCheckInitialSettleDelayMs.Value);
         return false;
+    }
+
+    // ---- drop spot -----------------------------------------------------
+
+    private const float DropSpotClearance = 15f;
+    private static readonly float[] DropSpotRadii = [16f, 22f, 30f];
+    private const int DropSpotDirections = 16;
+    private const float DropSpotArrivedDistance = 4f;
+    private const int DropSpotWalkTimeoutMs = 8000;
+
+    private const int DropSpotStuckMs = 600;
+
+    private List<GridVec2> ClickableObjectsNearby()
+    {
+        var points = new List<GridVec2>();
+        var ui = _game.IngameState.IngameUi;
+        foreach (var label in ui.ItemsOnGroundLabels ?? Enumerable.Empty<LabelOnGround>())
+        {
+            var e = label?.ItemOnGround;
+            if (e is { IsValid: true } && e.Type != EntityType.WorldItem && e.DistancePlayer < 150) points.Add(e.GridPosNum);
+        }
+
+        foreach (var e in _game.EntityListWrapper.Entities)
+        {
+            if (e is not { IsValid: true, IsTargetable: true } || e.DistancePlayer > 150) continue;
+            if (e.Type is EntityType.WorldItem or EntityType.Player or EntityType.Monster) continue;
+            points.Add(e.GridPosNum);
+        }
+
+        return points;
+    }
+
+    private static float Clearance(GridVec2 spot, List<GridVec2> objects) =>
+        objects.Count == 0 ? float.MaxValue : objects.Min(o => GridVec2.Distance(o, spot));
+
+    private async Task MoveToClearDropSpotAsync(CancellationToken ct)
+    {
+        var player = _game.Player;
+        if (player == null || _navigate == null) return;
+
+        var objects = ClickableObjectsNearby();
+        var here = player.GridPosNum;
+        if (Clearance(here, objects) >= DropSpotClearance) return;
+
+        GridVec2? target = null;
+        foreach (var radius in DropSpotRadii)
+        {
+            var bestClearance = 0f;
+            for (var i = 0; i < DropSpotDirections; i++)
+            {
+                var angle = i * MathF.PI * 2f / DropSpotDirections;
+                var spot = here + new GridVec2(MathF.Cos(angle), MathF.Sin(angle)) * radius;
+                var clearance = Clearance(spot, objects);
+                if (clearance < DropSpotClearance || clearance <= bestClearance || !_navigate.CanReach(spot)) continue;
+                bestClearance = clearance;
+                target = spot;
+            }
+
+            if (target != null) break;
+        }
+
+        if (target == null)
+        {
+            Log.Info("Drop mode: no clear spot found near the character; dropping beasts where it stands.");
+            return;
+        }
+
+        _runner.UpdateStatus("Moving off the Waypoint/NPCs so dropped beasts can be picked up...");
+
+        await _uiCleanup.PrepareAsync("moving to a clear drop spot", new UiCleanupOptions());
+
+        var sw = Stopwatch.StartNew();
+        var lastPos = _game.Player.GridPosNum;
+        var stuckSince = sw.ElapsedMilliseconds;
+        while (sw.ElapsedMilliseconds < DropSpotWalkTimeoutMs)
+        {
+            ct.ThrowIfCancellationRequested();
+            var pos = _game.Player.GridPosNum;
+            if (GridVec2.Distance(pos, target.Value) <= DropSpotArrivedDistance) break;
+            if (GridVec2.Distance(pos, lastPos) > 1f)
+            {
+                lastPos = pos;
+                stuckSince = sw.ElapsedMilliseconds;
+            }
+            else if (sw.ElapsedMilliseconds - stuckSince > DropSpotStuckMs)
+            {
+                Log.Debug("Drop mode: the character stopped moving before the drop spot; dropping where it stands.");
+                break;
+            }
+
+            if (!await _navigate.WalkTowardsAsync(target.Value)) break;
+            await _input.DelayAsync(Math.Max(60, _settings.Timing.Polling.FastPollDelayMs.Value));
+        }
+
+        var now = _game.Player.GridPosNum;
+        Log.Debug($"Drop mode: moved {GridVec2.Distance(here, now):0} grid units to a clear spot " +
+                  $"(nearest clickable object now {Clearance(now, ClickableObjectsNearby()):0} away).");
     }
 
     // ---- panel open ----------------------------------------------------

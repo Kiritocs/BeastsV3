@@ -64,6 +64,13 @@ public sealed class Navigator
         return simplified;
     }
 
+    public bool IsWalkable(Vector2 point)
+    {
+        var x = (int)point.X;
+        var y = (int)point.Y;
+        return x >= 0 && x < _worldGrid.Width && y >= 0 && y < _worldGrid.Height && _worldGrid[y, x] > 0;
+    }
+
     private Vector2 FindNearestWalkable(Vector2 point)
     {
         var cx = Math.Clamp((int)point.X, 0, _worldGrid.Width - 1);

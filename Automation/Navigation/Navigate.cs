@@ -41,16 +41,21 @@ public sealed class Navigate
         _navigatorAreaHash = null;
     }
 
-    public async Task<bool> WalkTowardsAsync(Entity entity)
+    public Task<bool> WalkTowardsAsync(Entity entity)
+    {
+        var targetPositioned = entity?.GetComponent<Positioned>();
+        return targetPositioned == null ? Task.FromResult(false) : WalkTowardsAsync(targetPositioned.GridPosNum);
+    }
+
+    public async Task<bool> WalkTowardsAsync(GridVec2 target)
     {
         _input.ThrowIfStopRequested();
 
         var playerPositioned = _game?.Game?.IngameState?.Data?.LocalPlayer?.GetComponent<Positioned>();
-        var targetPositioned = entity?.GetComponent<Positioned>();
         var navigator = GetOrBuildNavigator();
-        if (playerPositioned == null || targetPositioned == null || navigator == null) return false;
+        if (playerPositioned == null || navigator == null) return false;
 
-        var path = navigator.FindPath(playerPositioned.GridPosNum, targetPositioned.GridPosNum, NodeSize);
+        var path = navigator.FindPath(playerPositioned.GridPosNum, target, NodeSize);
         if (path == null || path.Count == 0) return false;
 
         var destination = SelectDestination(path, playerPositioned.GridPosNum);
@@ -61,6 +66,17 @@ public sealed class Navigate
             preDelayMs: _settings.Timing.Clicks.UiClickPreDelayMs.Value,
             postDelayMs: Math.Max(_settings.Timing.Polling.FastPollDelayMs.Value, _input.ClickPostDelayFloor()));
         return true;
+    }
+
+    // FindPath snaps a blocked target to the nearest walkable cell, so check the target itself.
+    public bool CanReach(GridVec2 target)
+    {
+        var playerPositioned = _game?.Game?.IngameState?.Data?.LocalPlayer?.GetComponent<Positioned>();
+        var navigator = GetOrBuildNavigator();
+        if (playerPositioned == null || navigator == null || !navigator.IsWalkable(target)) return false;
+
+        var path = navigator.FindPath(playerPositioned.GridPosNum, target, NodeSize);
+        return path is { Count: > 0 } && GridVec2.Distance(path[^1], target) <= 2f;
     }
 
     public float? DistanceToEntity(Entity entity)
