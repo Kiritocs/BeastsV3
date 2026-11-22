@@ -294,6 +294,19 @@ public sealed class FaustusList
         // listing price derives from these numbers, so a stale set here is real money.
         await RefreshPricesAsync(ct);
 
+        // Ctrl+click on Faustus opens his Currency Exchange, Ctrl+Alt+click his shop. An exchange left
+        // open makes the shop unusable, even where ExileCore reads the shop panel as open.
+        if (_merchant.IsCurrencyExchangeVisible)
+        {
+            _runner.UpdateStatus("Closing Faustus' Currency Exchange...");
+            await _input.TapKeyAsync(Keys.Space,
+                downHoldMs: _settings.Timing.Clicks.KeyTapDelayMs.Value,
+                postDelayMs: _settings.Timing.Polling.UiCheckInitialSettleDelayMs.Value);
+            if (!await _waits.WaitForAsync(() => !_merchant.IsCurrencyExchangeVisible, 1500,
+                    _settings.Timing.Polling.FastPollDelayMs.Value))
+                throw new InvalidOperationException("Faustus' Currency Exchange did not close. Close it and re-run.");
+        }
+
         if (!_merchant.IsPanelVisible)
         {
             _runner.UpdateStatus("Opening Faustus merchant panel...");
@@ -301,6 +314,12 @@ public sealed class FaustusList
                 throw new InvalidOperationException(
                     "Could not open Faustus. Make sure you're in your hideout with Faustus reachable.");
         }
+
+        // The Ctrl+Alt+click came through as Ctrl+click (Alt not registered): the exchange opened.
+        if (_merchant.IsCurrencyExchangeVisible)
+            throw new InvalidOperationException(
+                "Clicking Faustus opened his Currency Exchange instead of his shop: the Alt key did not register. " +
+                "Open his shop yourself (Ctrl+Alt+click) and re-run.");
 
         if (!_merchant.IsShopInventoryReady())
         {
@@ -566,47 +585,61 @@ public sealed class FaustusList
 
     // ---- shop-tab helpers ---------------------------------------------
 
-    // Switches the merchant panel to its Shop inventory.
+    // Switches the merchant panel to its Shop inventory. The panel shows before its inventory tabs
+    // are filled in (a server round trip), so the Shop tab is waited for instead of looked up once:
+    // a lookup right after opening found nothing and stopped the run with "Could not locate".
     private async Task SwitchToShopInventoryAsync()
     {
-        var panel = _merchant.Panel;
-        if (panel == null) return;
-
-        var shopIdx = _merchant.ResolveInventoryIndex("Shop");
         var timing = _settings.Timing;
+        var poll = timing.Polling.FastPollDelayMs.Value;
+        await _waits.WaitForAsync(() => ShopTabButton() != null || _merchant.IsShopInventoryReady(), 3000, poll);
 
-        // Clicks the Inventories entry named "Shop", reached via reflection.
-        var switchClicked = false;
-        var inventoriesProp = panel.GetType().GetProperty("Inventories");
-        var inventories = inventoriesProp?.GetValue(panel) as System.Collections.IEnumerable;
-        if (inventories != null)
+        for (var attempt = 0; attempt < 3; attempt++)
         {
-            foreach (var entry in inventories)
-            {
-                var tabName = entry?.GetType().GetProperty("TabName")?.GetValue(entry) as string;
-                if (!string.Equals(tabName, "Shop", StringComparison.OrdinalIgnoreCase)) continue;
+            if (_merchant.IsShopInventoryReady()) return;
 
-                var tabButton = entry.GetType().GetProperty("TabButton")?.GetValue(entry) as ExileCore.PoEMemory.Element;
-                if (tabButton == null) continue;
+            var button = ShopTabButton();
+            if (button == null) break;
 
-                var rect = tabButton.GetClientRect();
-                await _input.ClickAtAsync(
-                    rect,
-                    MouseButtons.Left,
-                    preDelayMs: timing.Clicks.UiClickPreDelayMs.Value,
-                    postDelayMs: Math.Max(timing.Clicks.UiClickPostDelayMs.Value, timing.Polling.TabSwitchDelayMs.Value));
-                switchClicked = true;
-                break;
-            }
+            await _input.ClickAtAsync(
+                button.GetClientRect(),
+                MouseButtons.Left,
+                preDelayMs: timing.Clicks.UiClickPreDelayMs.Value,
+                postDelayMs: Math.Max(timing.Clicks.UiClickPostDelayMs.Value, timing.Polling.TabSwitchDelayMs.Value));
+
+            if (await _waits.WaitForAsync(_merchant.IsShopInventoryReady, 1500, poll)) return;
         }
 
-        if (!switchClicked && !_merchant.IsShopInventoryReady())
+        if (_merchant.IsShopInventoryReady()) return;
+
+        var panel = _merchant.Panel;
+        var seen = panel?.Inventories?.Select(i => i?.TabName ?? "(no name)").ToList() ?? [];
+        Log.Info("Faustus panel: " +
+                 $"visible={panel?.IsVisible}, visible inventory={(panel?.VisibleStash == null ? "none" : $"#{panel.IndexVisibleStash}")}, " +
+                 $"currency exchange open={_merchant.IsCurrencyExchangeVisible}, inventories: " +
+                 (panel?.Inventories == null || panel.Inventories.Count == 0
+                     ? "none"
+                     : string.Join(", ", panel.Inventories.Select(i =>
+                         $"'{i?.TabName ?? "(no name)"}' (button {(i?.TabButton == null ? "missing" : "ok")})"))) + ".");
+        throw new InvalidOperationException(
+            "Could not switch Faustus to his 'Shop' inventory " +
+            $"(tabs seen: {(seen.Count == 0 ? "none" : string.Join(", ", seen))}). " +
+            "Click the Shop tab in Faustus' window yourself and re-run; the plugin needs the English game client.");
+    }
+
+    // The button of the merchant panel's inventory named "Shop", or null while it is not there.
+    private ExileCore.PoEMemory.Element ShopTabButton()
+    {
+        var inventories = _merchant.Panel?.Inventories;
+        if (inventories == null) return null;
+        foreach (var entry in inventories)
         {
-            throw new InvalidOperationException("Could not locate Faustus 'Shop' inventory tab. Panel structure may differ.");
+            if (!string.Equals(entry?.TabName, "Shop", StringComparison.OrdinalIgnoreCase)) continue;
+            var button = entry.TabButton;
+            if (button != null && button.GetClientRect().Width > 0) return button;
         }
 
-        if (!await _waits.WaitForAsync(_merchant.IsShopInventoryReady, 1000, timing.Polling.FastPollDelayMs.Value))
-            throw new InvalidOperationException("Faustus 'Shop' inventory did not become ready after switch.");
+        return null;
     }
 
     private async Task SelectShopTabAsync(int tabIndex)

@@ -42,8 +42,9 @@ public sealed class MerchantUi
         if (IsPanelVisible) return true;
         if (_worldEntity == null) return false;
 
+        // Stops on the Currency Exchange too, so a click that opened it is reported, not retried.
         return await _worldEntity.EnsureOpenAsync(
-            isOpen: () => IsPanelVisible,
+            isOpen: () => IsPanelVisible || IsCurrencyExchangeVisible,
             findEntity: FindFaustusEntity,
             button: MouseButtons.Left,
             modifiers: new[] { Keys.LControlKey, Keys.LMenu });
@@ -59,6 +60,9 @@ public sealed class MerchantUi
     public StashElement Panel => _game?.IngameState?.IngameUi?.OfflineMerchantPanel;
 
     public bool IsPanelVisible => Panel?.IsVisible == true;
+
+    // Faustus' Currency Exchange, a separate panel from his shop.
+    public bool IsCurrencyExchangeVisible => _game?.IngameState?.IngameUi?.CurrencyExchangePanel?.IsVisible == true;
 
     public Element PopupWindow => _game?.IngameState?.IngameUi?.PopUpWindow;
 

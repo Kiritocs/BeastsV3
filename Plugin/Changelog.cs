@@ -31,6 +31,8 @@ public static class Changelog
             "Thread Effects lists only the seven modifiers Bestiary Threads can roll, in the game's words. Effects that come from your atlas tree are no longer shown. Check your Good, Bad, Show and Hide choices under Effects.",
             "Fixed Load Map Device sometimes stopping with 'thread slot should hold Bestiary Thread but shows Account-bound'.",
             "Fixed ground labels staying off after picking up dropped beasts, so walking to the stash after itemizing failed."),
+        new(2026, 11, 22, 1,
+            "Faustus listing is more reliable when opening his shop."),
         new(2026, 8, 23, 1,
             "Map Device load: a quantity of two stacks now keeps two slots filled.",
             "Map Device load: slots beyond what your quantity asks for go back to your inventory.",

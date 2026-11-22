@@ -36,7 +36,10 @@ public sealed class UiCleanup
         var keepLeft = keepBestiary || keepAtlas || keepStash || keepMerchant || keepMapDevice;
         var keepRight = keepInventory;
 
+        // Faustus' Currency Exchange is a panel of its own; kept open it hides his shop, which is
+        // only reachable by closing it and Ctrl+Alt-clicking him again.
         return (!keepStash && ui.StashElement?.IsVisible == true) ||
+               ui.CurrencyExchangePanel?.IsVisible == true ||
                ui.NpcDialog?.IsVisible == true ||
                ui.SellWindow?.IsVisible == true ||
                ui.PurchaseWindow?.IsVisible == true ||
