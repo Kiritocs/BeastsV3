@@ -178,6 +178,10 @@ public sealed class SettingsMenu
             ImGui.Spacing();
         }
 
+        // Until the warning is accepted the real Automation category is not in the tree; this row
+        // opens the warning instead.
+        if (!AutomationConsent.Acknowledged) RailCategory(LockedAutomation, null);
+
         foreach (var category in _categories)
         {
             RailCategory(category.Name, category);
@@ -355,6 +359,12 @@ public sealed class SettingsMenu
         if (IsSelected(MenuTree.HomeCategory))
         {
             DrawHome();
+            return;
+        }
+
+        if (IsSelected(LockedAutomation) && !AutomationConsent.Acknowledged)
+        {
+            DrawAutomationGate();
             return;
         }
 
@@ -584,6 +594,12 @@ public sealed class SettingsMenu
         var session = Invoke(_context?.Session);
         var automation = Invoke(_context?.Automation);
         var now = DateTime.UtcNow;
+
+        if (!AutomationConsent.Acknowledged)
+        {
+            DrawAutomationGate();
+            ImGui.Dummy(new Vector2(0f, 8f));
+        }
 
         var spacing = ImGui.GetStyle().ItemSpacing.X;
         var cardWidth = MathF.Max(70f, (ImGui.GetContentRegionAvail().X - (spacing * 3f)) / 4f);
@@ -820,7 +836,7 @@ public sealed class SettingsMenu
         var now = DateTime.UtcNow;
         if (_categories.Count > 0 && now - _builtAtUtc < RebuildInterval) return;
 
-        _categories = MenuTree.Build(_settings);
+        _categories = HideLockedAutomation(MenuTree.Build(_settings));
         _allItems = MenuTree.Flatten(_categories);
         _builtAtUtc = now;
         MeasureRail();
@@ -831,6 +847,33 @@ public sealed class SettingsMenu
         _selectedCategory = MenuTree.HomeCategory;
         _selectedSection = null;
         _categoryExpanded = true;
+    }
+
+    // Rail row and category name of the Automation settings.
+    private const string LockedAutomation = "Automation";
+
+    // Accepting rebuilds the tree at once and opens the now visible Automation settings.
+    private void DrawAutomationGate()
+    {
+        if (!AutomationWarning.DrawGate()) return;
+        _builtAtUtc = DateTime.MinValue;
+        EnsureTree();
+        _selectedCategory = LockedAutomation;
+        _selectedSection = null;
+        _categoryExpanded = true;
+    }
+
+    // Without the accepted warning, the Automation category and the automation status overlay
+    // settings are left out, which also keeps them out of search and the hotkey overview.
+    private static List<MenuCategory> HideLockedAutomation(List<MenuCategory> categories)
+    {
+        if (AutomationConsent.Acknowledged) return categories;
+
+        categories.RemoveAll(c => string.Equals(c.Name, LockedAutomation, StringComparison.OrdinalIgnoreCase));
+        foreach (var category in categories)
+            category.Sections.RemoveAll(s => s.Root?.Id == nameof(BeastsSettings.AutomationStatus));
+        categories.RemoveAll(c => c.Sections.Count == 0);
+        return categories;
     }
 
     // Widest label the rail has to show, plus its indents and padding. Sections only count when

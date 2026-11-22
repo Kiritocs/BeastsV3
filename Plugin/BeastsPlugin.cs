@@ -536,11 +536,19 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
         _threadEffectsOverlay.Render();
         _possibleBeastsOverlay.Render();
         _automationStatusOverlay.Render();
-        _quickButtons.Render();
-        _clipboardAutoPaste.Tick();
 
         // Emergency stop: works anytime without requiring the hotkey to match a workflow.
         CheckPanicStopHotkey();
+
+        // Uses the runner's edge detection, but the work itself is synchronous.
+        _runner.CheckHotkey(Settings.LogFile.DumpDiagnosticsHotkey, "Dump diagnostics",
+            () => { DumpDiagnostics(); return Task.CompletedTask; });
+
+        // Nothing that clicks or types for the player runs before the automation warning is accepted.
+        if (!BeastsV3.Plugin.Settings.Menu.AutomationConsent.Acknowledged) return;
+
+        _quickButtons.Render();
+        _clipboardAutoPaste.Tick();
 
         _runner.CheckHotkey(Settings.BestiaryAutomation.DeleteHotkey, "Bestiary delete",
             () => _bestiary.DeleteAllAsync());
@@ -554,10 +562,6 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
             () => _mapDeviceLoad.RunAsync());
         _runner.CheckHotkey(Settings.FullSequenceHotkey, "Full sequence",
             () => _fullSequence.RunAsync());
-
-        // Uses the runner's edge detection, but the work itself is synchronous.
-        _runner.CheckHotkey(Settings.LogFile.DumpDiagnosticsHotkey, "Dump diagnostics",
-            () => { DumpDiagnostics(); return Task.CompletedTask; });
     }
 
     // Draws the custom settings menu, falling back to the host's rendering on error.
