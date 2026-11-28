@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using BeastsV3.Shared;
 using Hexa.NET.ImGui;
 
 namespace BeastsV3.Plugin;
@@ -37,7 +38,13 @@ public static class Changelog
             "Itemizing retries placing a beast left on the cursor instead of stopping at the first missed click.",
             "Drop Beasts While Itemizing walks a few steps away from the Waypoint, Einhar or the stash first, so the dropped beasts can be picked up.",
             "Fixed the unique Black Mórrigan getting no price in the Captured Beasts tab and being skipped by itemizing.",
+            "Thread Effects shows the new Thread modifier: Red Beasts have additional Bestiary Modifiers.",
             "Automation now has to be unlocked once by accepting a warning that abusing it can get you banned. Until then its settings, hotkeys and buttons are off."),
+        new(2026, 11, 28, 1,
+            "Possible Beasts: the line 'None of your tracked beasts can be in this map' now disappears 10 seconds after you enter the map. Change the time, or set 0 to keep it, under Overlays: Possible Beasts > Hide None Message After.",
+            "New: Attach To, for the Analytics overlay, Thread Effects and Possible Beasts. Attach an overlay below, above, right or left of another one and it moves as that one grows and shrinks, so stacked overlays no longer overlap or leave a hole. Off by default: your positions stay as they are.",
+            "New option under Overlays: Visibility: Hide In Maps Without Beasts. Hides the beast counter, Thread Effects and Possible Beasts in a map that holds no beasts at all. Off by default.",
+            "Fixed rare Harvest monsters (Primal Cystcaller, Wild Bristle Matron and the like) being marked and counted as beasts when they came from a Harvest crop and cannot be captured."),
         new(2026, 8, 23, 1,
             "Map Device load: a quantity of two stacks now keeps two slots filled.",
             "Map Device load: slots beyond what your quantity asks for go back to your inventory.",
@@ -51,8 +58,32 @@ public static class Changelog
         .OrderByDescending(entry => entry.SortKey)
         .ToArray();
 
+    // The settings category this is shown under.
+    public const string MenuName = "What's New";
+
+    private const string SeenKey = "changelogSeen";
+
+    // The newest entry and the number of change lines. A line added to an entry that is
+    // already out counts as new; a corrected typo does not.
+    private static readonly string Current = Sorted.Length == 0
+        ? string.Empty
+        : $"{Sorted[0].SortKey}:{Sorted.Sum(entry => entry.Changes?.Length ?? 0)}";
+
+    private static bool? _unread;
+
+    // Whether there are changes the user has not opened "What's New" for yet.
+    public static bool HasUnread =>
+        _unread ??= Current.Length > 0 && PluginData.Get<string>(SeenKey) != Current;
+
     public static void Draw()
     {
+        // Drawn means the page is open: that counts as read.
+        if (HasUnread)
+        {
+            _unread = false;
+            PluginData.Set(SeenKey, Current);
+        }
+
         if (Sorted.Length == 0)
         {
             ImGui.TextDisabled("No changelog entries yet.");

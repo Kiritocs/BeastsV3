@@ -29,7 +29,10 @@ public static class BeastCaptureStates
         if (entity == null || entity.Rarity is not (MonsterRarity.Rare or MonsterRarity.Unique)) return false;
 
         // Metadata is the one signal a stat lookup can't provide, so it is checked first.
-        if (MatchesCatalogMetadata(entity.Metadata)) return true;
+        // Not for Harvest species: the monsters a Harvest crop spawns are the same species
+        // with the same name, and those cannot be captured. Only the stat tells them apart.
+        var metadata = entity.Metadata;
+        if (!IsHarvestSpecies(metadata) && MatchesCatalogMetadata(metadata)) return true;
 
         if (CapturableStat is { } stat && entity.Stats?.ContainsKey(stat) == true) return true;
 
@@ -37,6 +40,9 @@ public static class BeastCaptureStates
         var buffs = entity.Buffs;
         return buffs != null && buffs.Find(b => b.Name == CapturedBuff || b.Name == TrappedBuff) != null;
     }
+
+    private static bool IsHarvestSpecies(string metadata) =>
+        metadata != null && metadata.StartsWith("Metadata/Monsters/LeagueHarvest/", StringComparison.OrdinalIgnoreCase);
 
     // True when the entity's metadata matches a catalog beast prefix.
     private static bool MatchesCatalogMetadata(string metadata)

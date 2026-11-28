@@ -36,14 +36,27 @@ public static class OverlayWindow
     {
         var rect = game.Window.GetWindowRectangle();
         var anchor = new Vector2(rect.Width * (xPercent / 100f), rect.Height * (yPercent / 100f));
+        var (windowSize, wrapWidth) = Measure(game, text, style, maxWidthPercent);
 
+        var position = centerHorizontally
+            ? new Vector2(anchor.X - windowSize.X / 2f, anchor.Y)
+            : anchor;
+
+        DrawAt(windowId, text, position, windowSize, wrapWidth, style, lineColors);
+        return windowSize;
+    }
+
+    // The size the window will have, and the width its text wraps at (0 for no wrapping).
+    public static (Vector2 Size, float WrapWidth) Measure(
+        GameController game, string text, Style style, float maxWidthPercent = 0f)
+    {
         // Wrap width is measured before the font scale is applied, since the font scale
         // multiplies whatever ImGui lays out. Without this a long error is one line wider than
         // the screen, so both ends of it are off-screen.
         var wrapWidth = 0f;
         if (maxWidthPercent > 0f)
         {
-            var maxWindowWidth = rect.Width * (maxWidthPercent / 100f);
+            var maxWindowWidth = game.Window.GetWindowRectangle().Width * (maxWidthPercent / 100f);
             wrapWidth = MathF.Max(80f, (maxWindowWidth - (style.Padding * 2f)) / MathF.Max(0.1f, style.TextScale));
         }
 
@@ -54,11 +67,14 @@ public static class OverlayWindow
         var windowSize = new Vector2(
             textSize.X * style.TextScale + style.Padding * 2,
             textSize.Y * style.TextScale + style.Padding * 2);
+        return (windowSize, wrapWidth);
+    }
 
-        var position = centerHorizontally
-            ? new Vector2(anchor.X - windowSize.X / 2f, anchor.Y)
-            : anchor;
-
+    // Draws the window with its top left corner at a pixel position.
+    public static void DrawAt(
+        string windowId, string text, Vector2 position, Vector2 windowSize, float wrapWidth, Style style,
+        Color[] lineColors = null)
+    {
         ImGui.SetNextWindowPos(position, ImGuiCond.Always);
         ImGui.SetNextWindowSize(windowSize, ImGuiCond.Always);
 
@@ -107,7 +123,5 @@ public static class OverlayWindow
 
         ImGui.PopStyleVar(3);
         ImGui.PopStyleColor(2);
-
-        return windowSize;
     }
 }

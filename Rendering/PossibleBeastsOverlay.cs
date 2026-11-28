@@ -16,7 +16,7 @@ namespace BeastsV3.Rendering;
 // map has loaded. A listed beast is possible, not certain (see MapBeastPreloads), so each line
 // carries the beast's own record: in how many of the maps that listed it it really was there.
 // Once a beast is seen its line changes colour. When none of the tracked beasts can be in the
-// map, it says so.
+// map, it says so, for as long as "Hide None Message After" allows.
 public sealed class PossibleBeastsOverlay
 {
     private const string BlackMorrigan = "Black Mórrigan";
@@ -33,15 +33,23 @@ public sealed class PossibleBeastsOverlay
     private readonly PreloadRecord _record;
     private readonly PriceService _prices;
     private readonly SessionState _state;
+    private readonly OverlayLayout _layout;
+    private readonly EmptyMap _emptyMap;
 
     private string _text = string.Empty;
     private Color[] _lineColors = [];
     private DateTime _builtUtc = DateTime.MinValue;
 
+    // The map the "none" line was first shown for, and when. Each map has its own set.
+    private IReadOnlySet<string> _noneFor;
+    private DateTime _noneSinceUtc;
+
     public PossibleBeastsOverlay(
         GameController game, BeastsSettings settings, MapBeastPreloads preloads, PreloadRecord record,
-        PriceService prices, SessionState state)
+        PriceService prices, SessionState state, OverlayLayout layout, EmptyMap emptyMap)
     {
+        _emptyMap = emptyMap;
+        _layout = layout;
         _game = game;
         _settings = settings;
         _preloads = preloads;
@@ -53,7 +61,7 @@ public sealed class PossibleBeastsOverlay
     public void Render()
     {
         var window = _settings.PossibleBeasts;
-        if (!window.Show.Value || !Visible()) return;
+        if (!window.Show.Value || !Visible() || _emptyMap.HideOverlays) return;
 
         var now = DateTime.UtcNow;
         if (now - _builtUtc >= RefreshInterval)
@@ -72,8 +80,7 @@ public sealed class PossibleBeastsOverlay
             BorderRounding: window.BorderRounding.Value,
             TextScale: window.TextScale.Value);
 
-        OverlayWindow.Draw(_game, "##BeastsV3PossibleBeasts", _text,
-            window.XPos.Value, window.YPos.Value, style, centerHorizontally: false, lineColors: _lineColors);
+        _layout.Draw(OverlayLayout.PossibleBeasts, "##BeastsV3PossibleBeasts", _text, style, _lineColors);
     }
 
     private void Build()
@@ -101,6 +108,15 @@ public sealed class PossibleBeastsOverlay
 
         if (names.Count == 0)
         {
+            if (!ReferenceEquals(_noneFor, possible))
+            {
+                _noneFor = possible;
+                _noneSinceUtc = _builtUtc;
+            }
+
+            var hideAfter = window.HideNoneAfterSeconds.Value;
+            if (hideAfter > 0 && _builtUtc - _noneSinceUtc >= TimeSpan.FromSeconds(hideAfter)) return;
+
             _text = "None of your tracked beasts can be in this map";
             _lineColors = [window.NoneColor.Value];
             return;

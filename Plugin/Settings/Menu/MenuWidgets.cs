@@ -183,6 +183,21 @@ public static class MenuWidgets
                 break;
             }
 
+            case ListNode list:
+            {
+                BeginRow(item.Label, item.Tooltip, labelWidth);
+                var current = list.Value ?? string.Empty;
+                if (ImGui.BeginCombo(id, current))
+                {
+                    foreach (var choice in list.Values)
+                    {
+                        if (ImGui.Selectable(choice, choice == current)) list.Value = choice;
+                    }
+                    ImGui.EndCombo();
+                }
+                break;
+            }
+
             case ColorNode color:
             {
                 BeginRow(item.Label, item.Tooltip, labelWidth);

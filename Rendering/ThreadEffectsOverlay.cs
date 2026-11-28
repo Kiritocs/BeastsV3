@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using BeastsV3.Beasts;
 using BeastsV3.Plugin.Settings;
 using BeastsV3.Shared;
 using ExileCore;
@@ -28,9 +29,9 @@ public sealed class ThreadEffectsOverlay
     private const string Bad = ThreadEffectsSettings.Bad;
     private const string Plain = ThreadEffectsSettings.Plain;
 
-    // The seven modifiers the game lists under "Random Bestiary Thread Modifiers", in its own
-    // words. The invasion and Sacred Fauna stats are matched by name: neither has been seen on
-    // a map yet.
+    // The eight modifiers the game lists under "Random Bestiary Thread Modifiers", in its own
+    // words. The invasion, Sacred Fauna and additional modifier stats are matched by name: none
+    // has been seen on a map yet.
     private static readonly Effect[] Effects =
     [
         new("MapAdditionalRedBeasts", "Additional Red Beasts", Good, v => $"{v} additional Red Beast{ImGuiEx.PluralSuffix(v)}"),
@@ -40,25 +41,31 @@ public sealed class ThreadEffectsOverlay
         new("MapBestiaryBeastsHaveXWispsOfAllTypes", "Beasts empowered by Wildwood Wisps", Plain, _ => "Beasts are empowered by Wildwood Wisps of all types"),
         new("MapBestiaryEinharBloodExplodeAura", "Enemies near Einhar explode", Plain, _ => "Enemies near Einhar explode on death"),
         new("MapBestiaryYellowBeastsAreHulks", "Yellow Beasts are Nameless Beasts", Plain, _ => "Yellow Beasts are Nameless Beasts"),
+        new("MapBestiaryBeastsXAdditionalModifiers", "Red Beasts have additional Bestiary Modifiers", Plain,
+            v => v == 1 ? "Red Beasts have an additional Bestiary Modifier" : $"Red Beasts have {v} additional Bestiary Modifiers"),
     ];
 
     private readonly GameController _game;
     private readonly BeastsSettings _settings;
+    private readonly OverlayLayout _layout;
+    private readonly EmptyMap _emptyMap;
 
     private string _text = string.Empty;
     private Color[] _lineColors = [];
     private DateTime _builtUtc = DateTime.MinValue;
 
-    public ThreadEffectsOverlay(GameController game, BeastsSettings settings)
+    public ThreadEffectsOverlay(GameController game, BeastsSettings settings, OverlayLayout layout, EmptyMap emptyMap)
     {
+        _emptyMap = emptyMap;
         _game = game;
         _settings = settings;
+        _layout = layout;
     }
 
     public void Render()
     {
         var window = _settings.ThreadEffects;
-        if (!window.Show.Value || !Visible()) return;
+        if (!window.Show.Value || !Visible() || _emptyMap.HideOverlays) return;
 
         // The stats only change with the map, so the text is rebuilt once a second, not per frame.
         var now = DateTime.UtcNow;
@@ -78,8 +85,7 @@ public sealed class ThreadEffectsOverlay
             BorderRounding: window.BorderRounding.Value,
             TextScale: window.TextScale.Value);
 
-        OverlayWindow.Draw(_game, "##BeastsV3ThreadEffects", _text,
-            window.XPos.Value, window.YPos.Value, style, centerHorizontally: false, lineColors: _lineColors);
+        _layout.Draw(OverlayLayout.ThreadEffects, "##BeastsV3ThreadEffects", _text, style, _lineColors);
     }
 
     // The settings list: one row per known effect with how the overlay shows it.

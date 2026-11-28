@@ -4,6 +4,7 @@ using BeastsV3.Analytics;
 using BeastsV3.Plugin.Settings;
 using BeastsV3.Shared;
 using ExileCore;
+using Vector2 = System.Numerics.Vector2;
 
 namespace BeastsV3.Rendering;
 
@@ -15,11 +16,13 @@ public sealed class AnalyticsOverlay
     private readonly BeastsSettings _settings;
     private readonly SessionRecorder _recorder;
     private readonly Func<TelemetryUploader> _telemetry;
+    private readonly OverlayLayout _layout;
     private readonly List<string> _lineBuffer = new(7);
 
     public AnalyticsOverlay(GameController game, BeastsSettings settings,
-        SessionRecorder recorder, Func<TelemetryUploader> telemetry)
+        SessionRecorder recorder, Func<TelemetryUploader> telemetry, OverlayLayout layout)
     {
+        _layout = layout;
         _game = game;
         _settings = settings;
         _recorder = recorder;
@@ -44,24 +47,19 @@ public sealed class AnalyticsOverlay
             BorderRounding: window.BorderRounding.Value,
             TextScale: window.TextScale.Value);
 
-        var size = OverlayWindow.Draw(_game, "##BeastsV3AnalyticsOverlay", text,
-            window.XPos.Value, window.YPos.Value, style, centerHorizontally: false);
+        var (position, size) = _layout.Draw(OverlayLayout.AnalyticsOverlay, "##BeastsV3AnalyticsOverlay", text, style);
 
-        DrawTelemetryWarning(window, size);
+        DrawTelemetryWarning(window, position, size);
     }
 
     // Orange banner under the analytics overlay while anonymous map data is being uploaded.
-    private void DrawTelemetryWarning(AnalyticsOverlaySettings window, System.Numerics.Vector2 overlaySize)
+    private void DrawTelemetryWarning(AnalyticsOverlaySettings window, Vector2 overlayPosition, Vector2 overlaySize)
     {
         var telemetrySettings = _settings.Analytics.Telemetry;
         if (!TelemetrySettings.Unlocked) return;
         if (!telemetrySettings.ShareAnonymousData.Value || !telemetrySettings.ShowActiveBanner.Value) return;
 
-        var rectHeight = _game.Window.GetWindowRectangle().Height;
-        if (rectHeight <= 0) return;
-
         const float gapPixels = 4f;
-        var yPercent = window.YPos.Value + ((overlaySize.Y + gapPixels) / rectHeight * 100f);
 
         var style = new OverlayWindow.Style(
             Text: WarnColor,
@@ -77,8 +75,13 @@ public sealed class AnalyticsOverlay
             ? $"Community data sharing on - next upload in {ImGuiEx.FormatDuration(eta.Value)}"
             : "Community data sharing on";
 
-        OverlayWindow.Draw(_game, "##BeastsV3TelemetryWarning", text,
-            window.XPos.Value, yPercent, style, centerHorizontally: false);
+        var (size, wrapWidth) = OverlayWindow.Measure(_game, text, style);
+        var position = new Vector2(overlayPosition.X, overlayPosition.Y + overlaySize.Y + gapPixels);
+        OverlayWindow.DrawAt("##BeastsV3TelemetryWarning", text, position, size, wrapWidth, style);
+
+        // The banner belongs to this overlay: whatever is attached goes around both.
+        _layout.Extend(OverlayLayout.AnalyticsOverlay,
+            new Vector2(MathF.Max(overlaySize.X, size.X), overlaySize.Y + gapPixels + size.Y));
     }
 
     private static readonly SharpDX.Color WarnColor = new(224, 155, 60, 255);

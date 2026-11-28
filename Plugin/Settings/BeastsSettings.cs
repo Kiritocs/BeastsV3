@@ -66,7 +66,7 @@ public class BeastsSettings : ISettings
     [Menu("Diagnostics: Log File", "Write a full session log to disk, including the detail the console setting above hides.")]
     public LogFileSettings LogFile { get; set; } = new();
 
-    [Menu("What's New", "Plugin update history, grouped by version.")]
+    [Menu(BeastsV3.Plugin.Changelog.MenuName, "Plugin update history, grouped by version.")]
     public ChangelogSettings Changelog { get; set; } = new();
 
 }
@@ -1196,14 +1196,30 @@ public class WebDashboardSettings
 [Submenu(CollapsedByDefault = true)]
 public class AnalyticsOverlaySettings
 {
+    public const string AttachNothing = "Nothing";
+    public const string Below = "Below";
+    public const string Above = "Above";
+    public const string Right = "Right";
+    public const string Left = "Left";
+    public static readonly string[] Sides = [Below, Above, Right, Left];
+
     [Menu("Show")]
     public ToggleNode Show { get; set; } = new(true);
 
-    [Menu("X Position (%)")]
+    [Menu("X Position (%)", "Not used while this overlay is attached to another one that is shown.")]
     public RangeNode<float> XPos { get; set; } = new(50, 0, 100);
 
-    [Menu("Y Position (%)")]
+    [Menu("Y Position (%)", "Not used while this overlay is attached to another one that is shown.")]
     public RangeNode<float> YPos { get; set; } = new(25, 0, 100);
+
+    [Menu("Attach To", "Place this overlay right next to another one instead of at its own position. It then moves as the other overlay grows and shrinks, so the two never overlap and never leave a hole. While the other overlay is not shown, this one takes its place.")]
+    public ListNode AttachTo { get; set; } = new() { Value = AttachNothing };
+
+    [Menu("Attach Side", "The side of the other overlay this one is placed at.")]
+    public ListNode AttachSide { get; set; } = new() { Value = Below };
+
+    [Menu("Attach Gap", "Pixels between this overlay and the one it is attached to.")]
+    public RangeNode<int> AttachGap { get; set; } = new(4, 0, 100);
 
     [Menu("Padding")]
     public RangeNode<float> Padding { get; set; } = new(8, 0, 50);
@@ -1259,6 +1275,9 @@ public class PossibleBeastsSettings : AnalyticsOverlaySettings
 
     [Menu("None Color", "Color of the line shown when none of your tracked beasts can be in the map.")]
     public ColorNode NoneColor { get; set; } = new(new Color(235, 95, 95, 255));
+
+    [Menu("Hide None Message After (seconds)", "How long the 'None of your tracked beasts can be in this map' line stays after you enter a map. 0 keeps it for the whole map.")]
+    public RangeNode<int> HideNoneAfterSeconds { get; set; } = new(10, 0, 60);
 }
 
 [Submenu(CollapsedByDefault = true)]
@@ -1275,4 +1294,7 @@ public class VisibilitySettings
 
     [Menu("Hide On Right Panel Open", "Hide overlays when a right-side panel (Inventory, Stash) is open.")]
     public ToggleNode HideOnRightPanelOpen { get; set; } = new(true);
+
+    [Menu("Hide In Maps Without Beasts", "Hide the beast counter, Thread Effects and Possible Beasts in a map that holds no beasts at all. A map with beasts you do not track still shows them. The Analytics overlay always stays.")]
+    public ToggleNode HideInMapsWithoutBeasts { get; set; } = new(false);
 }

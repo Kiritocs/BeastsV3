@@ -246,7 +246,18 @@ public sealed class SettingsMenu
             draw.AddRectFilled(origin, max, MenuTheme.U32(MenuTheme.Card), 4f);
         }
 
-        var textColor = selected ? MenuTheme.Panel : hovered ? MenuTheme.TextBright : MenuTheme.Muted;
+        // Unread changes: the row pulses gold until the page has been opened.
+        var unread = !selected && name == Changelog.MenuName && Changelog.HasUnread;
+        if (unread)
+        {
+            var pulse = 0.5f + (0.5f * MathF.Sin((float)ImGui.GetTime() * 4f));
+            draw.AddRectFilled(origin, max, MenuTheme.U32(MenuTheme.WithAlpha(MenuTheme.Gold, 0.12f + (0.30f * pulse))), 4f);
+            draw.AddRect(origin, max, MenuTheme.U32(MenuTheme.WithAlpha(MenuTheme.GoldBright, 0.45f + (0.55f * pulse))), 4f);
+        }
+
+        var textColor = selected ? MenuTheme.Panel
+            : unread ? MenuTheme.GoldBright
+            : hovered ? MenuTheme.TextBright : MenuTheme.Muted;
         var textY = origin.Y + ((height - ImGui.GetTextLineHeight()) * 0.5f);
         var textX = origin.X + 10f;
 

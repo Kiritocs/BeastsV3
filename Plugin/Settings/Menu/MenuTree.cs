@@ -214,7 +214,7 @@ public static class MenuTree
 
     private static bool IsNode(object value) => value
         is ToggleNode or ColorNode or TextNode or ButtonNode or CustomNode or HotkeyNodeV2
-        or RangeNode<int> or RangeNode<float>;
+        or RangeNode<int> or RangeNode<float> or ListNode;
 
     // Properties in declaration order, via metadata token.
     private static IEnumerable<PropertyInfo> OrderedProperties(Type type) =>

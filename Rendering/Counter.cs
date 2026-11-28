@@ -26,10 +26,12 @@ public sealed class Counter
 
     private readonly Func<bool> _isInFinalizedMap;
     private readonly Func<bool> _hideBeastOverlay;
+    private readonly EmptyMap _emptyMap;
 
     public Counter(GameController game, BeastsSettings settings, BeastTracker tracker,
-        Func<bool> isInFinalizedMap, Func<bool> hideBeastOverlay)
+        Func<bool> isInFinalizedMap, Func<bool> hideBeastOverlay, EmptyMap emptyMap)
     {
+        _emptyMap = emptyMap;
         _game = game;
         _settings = settings;
         _tracker = tracker;
@@ -47,7 +49,7 @@ public sealed class Counter
 
     public void Render()
     {
-        if (!Visible()) return;
+        if (!Visible() || _emptyMap.HideOverlays) return;
 
         // Banked map and the player is not standing in it - nothing current to show.
         // isInFinalizedMap is the exception: still inside it, so the frozen "complete" readout

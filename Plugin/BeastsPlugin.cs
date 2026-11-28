@@ -43,9 +43,11 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
     private CostTracker _cost;
     private SessionRecorder _recorder;
     private AreaTransitions _areaTransitions;
+    private OverlayLayout _overlayLayout;
     private AnalyticsOverlay _analyticsOverlay;
     private ThreadEffectsOverlay _threadEffectsOverlay;
     private MapBeastPreloads _beastPreloads;
+    private EmptyMap _emptyMap;
     private PreloadRecord _preloadRecord;
     private PossibleBeastsOverlay _possibleBeastsOverlay;
     private TelemetryUploader _telemetry;
@@ -121,6 +123,7 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
             return state != null && state.MapWasFinalized && !state.IsCurrentAreaTrackable;
         };
 
+        _emptyMap = new EmptyMap(GameController, Settings, () => _beastPreloads, () => _tracker);
         CreateTracking(isInFinalizedMap, hideBeastOverlay);
         CreateAnalytics();
         CreateRenderers(hideBeastOverlay);
@@ -155,7 +158,7 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
         _tracker = new BeastTracker(GameController, Settings);
         _heartbeat = new DetectionHeartbeat(GameController, Settings, _tracker);
         _pricePanel = new PricePanel(Settings, _prices);
-        _counter = new Counter(GameController, Settings, _tracker, isInFinalizedMap, hideBeastOverlay);
+        _counter = new Counter(GameController, Settings, _tracker, isInFinalizedMap, hideBeastOverlay, _emptyMap);
     }
 
     private void CreateAnalytics()
@@ -165,12 +168,13 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
         _recorder = new SessionRecorder(GameController, Settings, _tracker, _prices, _cost, _sessionStore);
         _areaTransitions = new AreaTransitions(_recorder.State);
         // A getter, not the current value: _telemetry is assigned below, Render() runs later.
-        _analyticsOverlay = new AnalyticsOverlay(GameController, Settings, _recorder, () => _telemetry);
-        _threadEffectsOverlay = new ThreadEffectsOverlay(GameController, Settings);
+        _overlayLayout = new OverlayLayout(GameController, Settings);
+        _analyticsOverlay = new AnalyticsOverlay(GameController, Settings, _recorder, () => _telemetry, _overlayLayout);
+        _threadEffectsOverlay = new ThreadEffectsOverlay(GameController, Settings, _overlayLayout, _emptyMap);
         _beastPreloads = new MapBeastPreloads(GameController);
         _preloadRecord = new PreloadRecord();
         _possibleBeastsOverlay = new PossibleBeastsOverlay(
-            GameController, Settings, _beastPreloads, _preloadRecord, _prices, _recorder.State);
+            GameController, Settings, _beastPreloads, _preloadRecord, _prices, _recorder.State, _overlayLayout, _emptyMap);
 
         // Opt-in telemetry. Enqueue does nothing with sharing off, so subscribing is safe.
         _telemetry = new TelemetryUploader(Settings);
@@ -365,9 +369,11 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
         _recorder = null;
         _areaTransitions = null;
         _analyticsOverlay = null;
+        _overlayLayout = null;
         _threadEffectsOverlay = null;
         _beastPreloads?.Clear();
         _beastPreloads = null;
+        _emptyMap = null;
         _preloadRecord = null;
         _possibleBeastsOverlay = null;
         _telemetry = null;
@@ -532,6 +538,7 @@ public class BeastsPlugin : BaseSettingsPlugin<BeastsSettings>
         _worldLabels.RenderTrackedBeastsWindow();
         _worldLabels.RenderStylePreview();
         _pricePanels.Render();
+        _overlayLayout.BeginFrame();
         _analyticsOverlay.Render();
         _threadEffectsOverlay.Render();
         _possibleBeastsOverlay.Render();
